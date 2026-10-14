@@ -216,3 +216,21 @@ def test_object_mask_skip_rate_is_honoured(tmp_path: Path) -> None:
     # Only the first object's single cell is emitted (bottom has skip_rate=2).
     assert len(factory.writer.frames) == 1
     assert factory.writer.frames[0][0, 0, 0] == 0
+
+
+def test_draw_duration_overrides_the_object_skip_rate(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    use_case = _build_use_case(tmp_path, factory)
+
+    # Two black cells. object_skip_rate=100 alone would emit zero drawing frames,
+    # but a 1 s target at 1 fps selects skip_rate=2 (one frame) instead.
+    config = VideoConfig(
+        frame_rate=1,
+        split_len=2,
+        object_skip_rate=100,
+        draw_duration_sec=1.0,
+        end_duration_sec=0,
+    )
+    use_case.execute(_make_image_with_black_cells(), config, output_path=tmp_path / "out.mp4")
+
+    assert len(factory.writer.frames) == 1

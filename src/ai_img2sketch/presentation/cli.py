@@ -57,6 +57,12 @@ def cli() -> None:
     help="Drawing skip rate (lower = more detailed)",
 )
 @click.option(
+    "--draw-duration",
+    type=click.FloatRange(min=0.1, max=600.0),
+    default=None,
+    help="Target seconds for the drawing phase (overrides --object-skip-rate)",
+)
+@click.option(
     "--end-duration",
     type=click.IntRange(0, 10),
     default=2,
@@ -86,6 +92,7 @@ def generate(
     split_len: int,
     frame_rate: int,
     object_skip_rate: int,
+    draw_duration: float | None,
     end_duration: int,
     hand_image: Path | None,
     hand_mask: Path | None,
@@ -100,6 +107,7 @@ def generate(
     Example:
         img2sketch generate input.jpg
         img2sketch generate ./photos --split-len 15 --frame-rate 30
+        img2sketch generate input.jpg --draw-duration 5
     """
     exit_code = 0
     try:
@@ -113,6 +121,7 @@ def generate(
             frame_rate=frame_rate,
             split_len=split_len,
             object_skip_rate=object_skip_rate,
+            draw_duration_sec=draw_duration,
             end_duration_sec=end_duration,
         )
 

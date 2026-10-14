@@ -11,6 +11,12 @@ class VideoConfig(BaseModel):
     frame_rate: int = Field(default=25, ge=1, le=120, description="Video frame rate (fps)")
     split_len: int = Field(default=10, ge=1, le=100, description="Grid split length")
     object_skip_rate: int = Field(default=8, ge=1, le=100, description="Skip rate for drawing")
+    draw_duration_sec: float | None = Field(
+        default=None,
+        ge=0.1,
+        le=600,
+        description="Target seconds for the drawing phase (overrides object_skip_rate)",
+    )
     end_duration_sec: int = Field(
         default=2, ge=0, le=10, description="Duration to show final colored image"
     )

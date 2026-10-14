@@ -22,6 +22,7 @@ from ..ports.video_writer import VideoWriter, VideoWriterFactory
 from ..services.dimension_adjuster import DimensionAdjuster
 from ..services.drawing_calculator import DrawingPathCalculator, GridCalculator
 from ..services.drawing_planner import DrawingGroup, DrawingPlanner
+from ..services.drawing_speed import DrawingSpeedCalculator
 from ..services.hand_overlay import HandOverlayService
 
 
@@ -58,6 +59,7 @@ class GenerateSketchVideoUseCase:
         self._path_calculator = DrawingPathCalculator()
         self._hand_overlay = HandOverlayService()
         self._drawing_planner = DrawingPlanner()
+        self._drawing_speed = DrawingSpeedCalculator()
 
     def execute(
         self,
@@ -161,12 +163,14 @@ class GenerateSketchVideoUseCase:
 
         self._logger.info("Found %d grid cells to draw", len(black_cells))
 
+        skip_rate = self._resolve_skip_rate(config, black_cells, object_masks)
+
         groups = self._drawing_planner.plan(
             black_cells,
             object_masks,
             preprocessed.dimensions,
             config.split_len,
-            config.object_skip_rate,
+            skip_rate,
         )
 
         for group in groups:
@@ -181,6 +185,46 @@ class GenerateSketchVideoUseCase:
             self._draw_group(
                 writer, drawn_frame, hand, preprocessed.dimensions, grid, group, config.split_len
             )
+
+    def _resolve_skip_rate(
+        self,
+        config: VideoConfig,
+        black_cells: npt.NDArray[np.int_],
+        object_masks: list[ObjectMask],
+    ) -> int:
+        """Return the skip rate to use, honouring a target drawing duration if set."""
+        if config.draw_duration_sec is None:
+            return config.object_skip_rate
+
+        cell_count = len(black_cells)
+        if any(mask.skip_rate is not None for mask in object_masks):
+            self._logger.warning(
+                "Object masks define their own skip_rate; the drawing duration "
+                "may differ from the requested %.2fs",
+                config.draw_duration_sec,
+            )
+
+        skip_rate = self._drawing_speed.skip_rate_for_duration(
+            cell_count, config.draw_duration_sec, config.frame_rate
+        )
+        achieved = self._drawing_speed.estimate_drawing_seconds(
+            cell_count, skip_rate, config.frame_rate
+        )
+        self._logger.info(
+            "Target drawing duration %.2fs -> skip rate %d (~%.2fs)",
+            config.draw_duration_sec,
+            skip_rate,
+            achieved,
+        )
+        tolerance = 1.0 / config.frame_rate + 0.05
+        if abs(achieved - config.draw_duration_sec) > tolerance:
+            self._logger.warning(
+                "Cannot reach %.2fs exactly (%.2fs achieved); adjust --split-len "
+                "or --frame-rate for finer control",
+                config.draw_duration_sec,
+                achieved,
+            )
+        return skip_rate
 
     def _draw_group(
         self,

@@ -35,6 +35,25 @@ def test_generate_help_lists_object_masks_option() -> None:
     assert "--object-masks" in result.output
 
 
+def test_generate_help_lists_draw_duration_option() -> None:
+    result = CliRunner().invoke(cli, ["generate", "--help"])
+    assert result.exit_code == 0
+    assert "--draw-duration" in result.output
+
+
+def test_generate_accepts_a_draw_duration(tmp_path: Path) -> None:
+    image_path = tmp_path / "sample.png"
+    _write_image(image_path)
+
+    result = CliRunner().invoke(
+        cli,
+        ["generate", str(image_path), "--draw-duration", "3", "--end-duration", "0"],
+    )
+
+    assert result.exit_code == 0
+    assert (tmp_path / "sample.mp4").exists()
+
+
 def test_info_reports_dimensions(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     _write_image(image_path)

@@ -70,6 +70,8 @@ infrastructure; infrastructure imports the ports.
 - **GridCalculator**: splits an image into a grid
 - **DrawingPathCalculator**: nearest-neighbour drawing order
 - **DrawingPlanner**: groups grid cells into ordered, per-object drawing groups
+- **DrawingSpeedCalculator**: turns a target drawing duration into a skip rate
+  (and estimates the duration a skip rate produces)
 - **HandOverlayService**: composites the hand onto a frame
 - **VideoPathResolver**: names each video after its image (`<name>.mp4`) next to
   it, or inside an explicit output directory
@@ -150,7 +152,7 @@ CLI (composition root)
     ↓ builds adapters + use case
 GenerateSketchVideoUseCase  (single image)
     ↓ uses ports (HandLoader, ImagePreprocessor, ObjectMaskLoader, VideoWriter)
-    ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, DrawingPlanner, HandOverlayService)
+    ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, DrawingPlanner, DrawingSpeedCalculator, HandOverlayService)
 Domain entities + value objects
     ↓ (adapters translate to/from OpenCV + disk)
 Video output
