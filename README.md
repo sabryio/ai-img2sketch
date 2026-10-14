@@ -203,6 +203,19 @@ Options:
 - **end-duration**: Duration (in seconds) to display the final colored image
 - **object-masks**: JSON file (see below) that draws regions in a specified order
 
+### Drawing Hand
+
+The drawing hand image and its mask are **bundled inside the package**, so they
+resolve correctly no matter where `img2sketch` is installed or which folder you
+run it from. You normally never need to pass them. To use a custom hand, point
+the CLI at your own files:
+
+```bash
+img2sketch generate input.jpg \
+    --hand-image path/to/hand.png \
+    --hand-mask path/to/hand-mask.png
+```
+
 ### Object Masking
 
 By default the whole image is drawn as one region, in a nearest-neighbour path.
@@ -288,18 +301,27 @@ ai-img2sketch/
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
 │   │       └── video_writer.py           # OpenCVVideoWriter
-│   └── presentation/              # Presentation layer (CLI)
-│       ├── cli.py                # Click CLI interface
-│       └── composition.py        # Composition root (wires everything)
+│   ├── presentation/              # Presentation layer (CLI)
+│   │   ├── cli.py                # Click CLI interface
+│   │   └── composition.py        # Composition root (wires everything)
+│   └── resources/                 # Bundled package data
+│       └── images/                # Default hand image + mask (shipped in the wheel)
+│           ├── drawing-hand.png
+│           └── hand-mask.png
 ├── tests/                        # pytest suite (unit + CLI)
 ├── main.py                       # Entry point
 ├── pyproject.toml               # Project configuration
 ├── uv.lock                      # Locked dependencies
-└── images/                      # Hand images, masks and mask examples
-    ├── drawing-hand.png
-    ├── hand-mask.png
-    └── example-object-masks.json
+└── images/                      # Example/test assets and mask examples
+    ├── cartoon.png
+    ├── drawing-hand.json
+    ├── example-object-masks.json
+    └── ...
 ```
+
+The drawing-hand image and mask used at runtime are shipped inside the package
+(`src/ai_img2sketch/resources/images/`) so they resolve from any working
+directory. The root `images/` folder holds example and test assets only.
 
 ### Architecture Layers
 

@@ -1,5 +1,6 @@
 """End-to-end CLI tests exercising the real OpenCV image loader."""
 
+from importlib import resources as importlib_resources
 from pathlib import Path
 
 import cv2
@@ -13,6 +14,12 @@ def _write_image(path: Path) -> None:
     image = np.full((60, 80, 3), 255, dtype=np.uint8)
     image[10:20, 10:20] = 0
     assert cv2.imwrite(str(path), image)
+
+
+def test_bundled_hand_assets_are_present() -> None:
+    images = importlib_resources.files("ai_img2sketch.resources.images")
+    assert (images / "drawing-hand.png").is_file()
+    assert (images / "hand-mask.png").is_file()
 
 
 def test_help_lists_commands() -> None:

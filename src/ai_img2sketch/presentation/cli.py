@@ -1,6 +1,7 @@
 """CLI interface for the AI Image to Sketch Video application."""
 
 import logging
+from importlib import resources as importlib_resources
 from pathlib import Path
 
 import click
@@ -19,8 +20,6 @@ from .composition import (
 )
 
 console = Console()
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 @click.group()
@@ -106,8 +105,8 @@ def generate(
     try:
         _print_banner()
 
-        hand_image = hand_image or PROJECT_ROOT / "images" / "drawing-hand.png"
-        hand_mask = hand_mask or PROJECT_ROOT / "images" / "hand-mask.png"
+        hand_image = hand_image or _bundled_image("drawing-hand.png")
+        hand_mask = hand_mask or _bundled_image("hand-mask.png")
         _require_hand_files(hand_image, hand_mask)
 
         config = VideoConfig(
@@ -197,6 +196,11 @@ def _print_banner() -> None:
             border_style="cyan",
         )
     )
+
+
+def _bundled_image(name: str) -> Path:
+    """Return the path to an image bundled inside the package."""
+    return Path(str(importlib_resources.files("ai_img2sketch.resources.images"))) / name
 
 
 def _require_hand_files(hand_image: Path, hand_mask: Path) -> None:
