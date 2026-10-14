@@ -116,13 +116,11 @@ D:\programming\Python\ai-img2sketch\scripts\batch-process.exe -i config.json -o 
 
 ## 🎬 What Happens
 
-For each image-voice pair:
+All image-voice pairs are processed **in parallel**. For each pair:
 
 1. ✅ Detects voice duration (e.g., 8.5 seconds)
-2. ✅ Generates sketch video with:
-   - Drawing duration = voice duration (8.5s)
-   - End pause = 2 seconds (except last image)
-3. ✅ Last image: no end pause (`--end-duration 0`)
+2. ✅ Generates sketch video with drawing duration = voice duration (8.5s)
+3. ✅ Adds `--end-duration` only to the last image (`0`, no end pause); every other image omits the flag and uses the CLI default
 4. ✅ Saves as `{image-name}.mp4` in output folder
 
 ## 💡 Pro Tips
@@ -244,11 +242,11 @@ Console output:
   Duration: 8.50 seconds
 
 [1/3] Processing: D:\my-project\images\slide1.jpg
-  Draw duration: 8.50s, End duration: 2s
+  Draw duration: 8.50s
   ✓ Generated video for D:\my-project\images\slide1.jpg
 
 [2/3] Processing: D:\my-project\images\slide2.jpg
-  Draw duration: 12.30s, End duration: 2s
+  Draw duration: 12.30s
   ✓ Generated video for D:\my-project\images\slide2.jpg
 
 [3/3] Processing: D:\my-project\images\slide3.jpg

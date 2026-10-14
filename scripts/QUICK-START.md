@@ -33,11 +33,11 @@ Save as `my-config.json` anywhere on your computer.
 
 ### 3. Run!
 ```bash
-# Windows
-D:\programming\Python\ai-img2sketch\scripts\batch-process.bat -i D:\path\to\my-config.json -o D:\output
+# Windows (standalone executable — no Bun needed)
+D:\programming\Python\ai-img2sketch\scripts\batch-process.exe -i D:\path\to\my-config.json -o D:\output
 
-# Linux/Mac
-~/programming/ai-img2sketch/scripts/batch-process.sh -i ~/path/to/my-config.json -o ~/output
+# Linux/Mac (run the TypeScript with Bun)
+bun ~/programming/ai-img2sketch/scripts/process-videos.ts -i ~/path/to/my-config.json -o ~/output
 ```
 
 ## 💡 Tips
@@ -51,10 +51,13 @@ D:\programming\Python\ai-img2sketch\scripts\batch-process.bat -i D:\path\to\my-c
 Place the config next to your `images/` and `voices/` folders for portability!
 
 **Last image has no end pause:**
-The script automatically sets `--end-duration 0` for the last image in your list.
+The script adds `--end-duration` only to the last image (`0`). Every other image omits the flag entirely.
 
 **Voice duration = drawing duration:**
 The script detects how long each voice file is and sets the drawing time to match.
+
+**Videos are generated in parallel:**
+All image-voice pairs are processed at once, so large batches finish faster.
 
 ## 📁 Recommended Structure
 ```
@@ -75,16 +78,16 @@ my-project/
 
 ```bash
 # Show help
-batch-process --help
+batch-process.exe --help
 
 # Process with default locations (./config.json → ./videos)
-batch-process
+batch-process.exe
 
 # Custom input and output
-batch-process -i my-config.json -o ./my-videos
+batch-process.exe -i my-config.json -o ./my-videos
 
 # Using absolute paths (run from anywhere!)
-batch-process -i D:/projects/video1/config.json -o D:/output
+batch-process.exe -i D:/projects/video1/config.json -o D:/output
 ```
 
 ## ❓ Having Issues?

@@ -18,6 +18,12 @@ interface ImageVoicePair {
   voice: string;
 }
 
+interface ProcessResult {
+  success: boolean;
+  image: string;
+  error?: string;
+}
+
 /**
  * Resolve a path to absolute, relative to the config file directory
  */
@@ -56,13 +62,16 @@ async function getAudioDuration(audioPath: string): Promise<number> {
 }
 
 /**
- * Generate a sketch video for an image with specific duration
+ * Generate a sketch video for an image with specific duration.
+ *
+ * `endDuration` is only applied to the last image; pass `undefined` for every
+ * other image so the CLI's own default end duration applies.
  */
 async function generateSketchVideo(
   imagePath: string,
   outputDir: string,
   drawDuration: number,
-  endDuration: number,
+  endDuration: number | undefined,
   index: number,
   total: number,
 ): Promise<void> {
@@ -80,7 +89,9 @@ async function generateSketchVideo(
 
   console.log(`\n[${index + 1}/${total}] Processing: ${absoluteImagePath}`);
   console.log(
-    `  Draw duration: ${drawDuration.toFixed(2)}s, End duration: ${endDuration}s`,
+    endDuration === undefined
+      ? `  Draw duration: ${drawDuration.toFixed(2)}s`
+      : `  Draw duration: ${drawDuration.toFixed(2)}s, End duration: ${endDuration}s`,
   );
 
   const args = [
@@ -91,9 +102,12 @@ async function generateSketchVideo(
     absoluteOutputDir,
     "--draw-duration",
     drawDuration.toString(),
-    "--end-duration",
-    endDuration.toString(),
   ];
+
+  // Only the last image gets an explicit --end-duration (0 = no trailing hold).
+  if (endDuration !== undefined) {
+    args.push("--end-duration", endDuration.toString());
+  }
 
   try {
     await $`${args}`;
@@ -167,9 +181,9 @@ Example:
 The script will:
 1. Read the JSON config file
 2. Detect the duration of each voice file
-3. Generate sketch videos with draw-duration matching the voice
-4. For the last image, --end-duration is set to 0
-5. All other images have --end-duration 2 seconds (default)
+3. Generate sketch videos in parallel, with draw-duration matching the voice
+4. Only the last image gets --end-duration 0 (no trailing hold)
+5. Every other image omits --end-duration (CLI default applies)
 `);
     process.exit(0);
   }
@@ -229,40 +243,41 @@ The script will:
   // Ensure output directory exists
   await $`mkdir -p ${absoluteOutputDir}`.quiet();
 
-  // Process each image-voice pair
+  // Process every image-voice pair in parallel.
+  // `Promise.all` preserves the input order of the results for the summary.
   const total = config.length;
-  const results: { success: boolean; image: string; error?: string }[] = [];
 
-  for (let i = 0; i < total; i++) {
-    const pair = config[i];
-    const isLast = i === total - 1;
+  const results: ProcessResult[] = await Promise.all(
+    config.map(async (pair, i): Promise<ProcessResult> => {
+      const isLast = i === total - 1;
 
-    try {
-      // Get voice duration
-      console.log(`🎵 Detecting duration for: ${pair.voice}`);
-      const voiceDuration = await getAudioDuration(pair.voice);
-      console.log(`  Duration: ${voiceDuration.toFixed(2)} seconds`);
+      try {
+        // Get voice duration
+        console.log(`🎵 Detecting duration for: ${pair.voice}`);
+        const voiceDuration = await getAudioDuration(pair.voice);
+        console.log(`  Duration: ${voiceDuration.toFixed(2)} seconds`);
 
-      // Generate video with appropriate parameters
-      // Last image: no end duration (--end-duration 0)
-      // Other images: 2 seconds end duration (can be customized)
-      const endDuration = isLast ? 0 : 2;
+        // Generate video with appropriate parameters
+        // Only the last image gets --end-duration 0 (no trailing hold).
+        // Every other image omits --end-duration entirely.
+        const endDuration = isLast ? 0 : undefined;
 
-      await generateSketchVideo(
-        pair.image,
-        absoluteOutputDir,
-        voiceDuration,
-        endDuration,
-        i,
-        total,
-      );
+        await generateSketchVideo(
+          pair.image,
+          absoluteOutputDir,
+          voiceDuration,
+          endDuration,
+          i,
+          total,
+        );
 
-      results.push({ success: true, image: pair.image });
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      results.push({ success: false, image: pair.image, error: errorMsg });
-    }
-  }
+        return { success: true, image: pair.image };
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        return { success: false, image: pair.image, error: errorMsg };
+      }
+    }),
+  );
 
   // Print summary
   console.log("\n" + "=".repeat(60));

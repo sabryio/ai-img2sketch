@@ -4,9 +4,10 @@
   "description": "Batch video processor for ai-img2sketch with voice duration detection",
   "type": "module",
   "scripts": {
-    "process": "bun run scripts/process-videos.ts",
-    "process:custom": "bun run scripts/process-videos.ts --input",
-    "help": "bun run scripts/process-videos.ts --help"
+    "process": "bun run process-videos.ts",
+    "process:custom": "bun run process-videos.ts --input",
+    "help": "bun run process-videos.ts --help",
+    "build:win": "bun build --compile --target=bun-windows-x64 --outfile batch-process.exe process-videos.ts"
   },
   "devDependencies": {
     "@types/bun": "latest"

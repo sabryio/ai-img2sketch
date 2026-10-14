@@ -8,9 +8,9 @@ This folder contains automation scripts for batch processing images with voice-o
 
 - **process-videos.ts** - Main Bun script that reads JSON config and generates videos
 - **config.example.json** - Example configuration file
-- **batch-process.bat** - Windows launcher (run from anywhere)
-- **batch-process.sh** - Linux/Mac launcher (run from anywhere)
+- **batch-process.exe** - Standalone Windows executable (built from `process-videos.ts`)
 - **README.md** - This documentation
+- **HOW-TO-USE.md** / **QUICK-START.md** - Step-by-step usage guides
 
 ## Requirements
 
@@ -56,14 +56,14 @@ sudo apt install ffmpeg
 3. Run the script:
 
    ```bash
-   # From project directory
+   # From the scripts directory with Bun
    bun run process
 
-   # From anywhere using the launcher (Windows)
-   D:\path\to\scripts\batch-process.bat -i D:\my-project\config.json -o D:\output
+   # From anywhere with the standalone executable (Windows)
+   D:\path\to\scripts\batch-process.exe -i D:\my-project\config.json -o D:\output
 
-   # From anywhere using the launcher (Linux/Mac)
-   /path/to/scripts/batch-process.sh -i ~/my-project/config.json -o ~/output
+   # From anywhere with Bun (Linux/Mac)
+   bun /path/to/scripts/process-videos.ts -i ~/my-project/config.json -o ~/output
    ```
 
 ### Running from Anywhere
@@ -80,16 +80,17 @@ bun D:\programming\Python\ai-img2sketch\scripts\process-videos.ts -i D:\my-video
 bun ~/programming/ai-img2sketch/scripts/process-videos.ts -i ~/my-videos/config.json -o ~/output
 ```
 
-#### Method 2: Using the launcher scripts
+#### Method 2: Using the standalone executable (Windows)
+
+The compiled `batch-process.exe` needs no Bun or Node.js runtime.
 
 ```bash
-# Windows (double-click or command line)
-D:\programming\Python\ai-img2sketch\scripts\batch-process.bat -i config.json -o output
-
-# Linux/Mac (make executable first)
-chmod +x ~/programming/ai-img2sketch/scripts/batch-process.sh
-~/programming/ai-img2sketch/scripts/batch-process.sh -i config.json -o output
+# Windows (double-click or run from a terminal)
+D:\programming\Python\ai-img2sketch\scripts\batch-process.exe -i config.json -o output
 ```
+
+On Linux/Mac, run the TypeScript directly with Bun (Method 1) or compile it for
+your platform: `bun build --compile --outfile batch-process process-videos.ts`.
 
 #### Method 3: Add to PATH (for ultimate convenience)
 
@@ -98,14 +99,16 @@ chmod +x ~/programming/ai-img2sketch/scripts/batch-process.sh
 1. Add `D:\programming\Python\ai-img2sketch\scripts` to your PATH
 2. Then run from anywhere:
    ```cmd
-   batch-process -i D:\my-videos\config.json -o D:\output
+   batch-process.exe -i D:\my-videos\config.json -o D:\output
    ```
 
 **Linux/Mac:**
 
-1. Create a symlink:
+1. Compile a native binary and link it:
    ```bash
-   sudo ln -s ~/programming/ai-img2sketch/scripts/batch-process.sh /usr/local/bin/batch-process
+   cd ~/programming/ai-img2sketch/scripts
+   bun build --compile --outfile batch-process process-videos.ts
+   sudo ln -s "$PWD/batch-process" /usr/local/bin/batch-process
    ```
 2. Then run from anywhere:
    ```bash
@@ -197,9 +200,9 @@ bun /path/to/scripts/process-videos.ts -i D:/project/config/videos.json -o D:/ou
 
 1. **Reads JSON config** - Loads image-voice pairs from JSON file
 2. **Detects voice duration** - Uses `ffprobe` to get accurate audio duration
-3. **Generates videos** - Calls `img2sketch generate` for each pair:
+3. **Generates videos in parallel** - Calls `img2sketch generate` for every pair at once:
    - `--draw-duration` is set to match the voice duration
-   - `--end-duration 2` for all images EXCEPT the last one
+   - `--end-duration` is omitted for every image except the last (the CLI default applies)
    - `--end-duration 0` for the last image (no final hold)
 4. **Outputs videos** - All videos are saved to the specified output directory
 
@@ -259,7 +262,7 @@ EOF
 
 # 2. Process all videos from any directory
 cd /tmp  # or any directory
-batch-process -i D:/my-videos/config.json -o D:/my-videos/output
+batch-process.exe -i D:/my-videos/config.json -o D:/my-videos/output
 
 # 3. Find your videos
 ls D:/my-videos/output/
@@ -271,6 +274,28 @@ ls D:/my-videos/output/
 - All videos are placed in the output directory (default: `./videos`)
 - Console shows progress for each video
 - Final summary shows success/failure count
+
+## Building the Executable
+
+The standalone Windows executable is built from `process-videos.ts` with Bun:
+
+```bash
+cd scripts
+bun run build:win
+```
+
+This produces `scripts/batch-process.exe`, which runs without Bun or Node.js
+installed. It still requires `img2sketch` and `ffprobe` on your PATH.
+
+To build for another platform, use the matching Bun target:
+
+```bash
+# Linux x64
+bun build --compile --target=bun-linux-x64 --outfile batch-process process-videos.ts
+
+# macOS (Apple Silicon)
+bun build --compile --target=bun-darwin-arm64 --outfile batch-process process-videos.ts
+```
 
 ## Troubleshooting
 
