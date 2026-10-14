@@ -1,6 +1,8 @@
 """CLI interface for the AI Image to Sketch Video application."""
 
 import logging
+import sys
+from contextlib import suppress
 from importlib import resources as importlib_resources
 from pathlib import Path
 
@@ -19,6 +21,23 @@ from .composition import (
     create_image_loader,
 )
 
+
+def _force_utf8_stdio() -> None:
+    """Force UTF-8 on stdout/stderr so Unicode output never crashes on Windows.
+
+    Rich writes Unicode glyphs (checkmarks, box drawing). On a Windows console or
+    pipe that defaults to a legacy code page (e.g. cp1252) those writes raise
+    ``UnicodeEncodeError``. Reconfiguring the streams to UTF-8 with a non-fatal
+    error handler keeps the output readable everywhere.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with suppress(ValueError, OSError):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 console = Console()
 
 
@@ -26,6 +45,7 @@ console = Console()
 @click.version_option(version="0.1.0")
 def cli() -> None:
     """AI Image to Sketch Video - Convert images to animated sketch videos."""
+    _force_utf8_stdio()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 

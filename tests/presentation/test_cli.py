@@ -1,13 +1,16 @@
 """End-to-end CLI tests exercising the real OpenCV image loader."""
 
+import io
+import sys
 from importlib import resources as importlib_resources
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 from click.testing import CliRunner
 
-from ai_img2sketch.presentation.cli import cli
+from ai_img2sketch.presentation.cli import _force_utf8_stdio, cli
 
 
 def _write_image(path: Path) -> None:
@@ -20,6 +23,25 @@ def test_bundled_hand_assets_are_present() -> None:
     images = importlib_resources.files("ai_img2sketch.resources.images")
     assert (images / "drawing-hand.png").is_file()
     assert (images / "hand-mask.png").is_file()
+
+
+def test_force_utf8_stdio_tolerates_streams_without_reconfigure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # StringIO has no reconfigure(); the helper must simply skip it.
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+    _force_utf8_stdio()
+
+
+def test_force_utf8_stdio_reconfigures_to_utf8(monkeypatch: pytest.MonkeyPatch) -> None:
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(sys, "stderr", io.StringIO())
+
+    _force_utf8_stdio()
+
+    assert stream.encoding.lower() in {"utf-8", "utf8"}
 
 
 def test_help_lists_commands() -> None:
