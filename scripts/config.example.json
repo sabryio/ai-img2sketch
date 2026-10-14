@@ -1,0 +1,16 @@
+[
+  {
+    "image": "./images/cartoon.png",
+    "voice": "./voices/intro.mp3"
+  },
+  {
+    "image": "./images/stage.png",
+    "voice": "./voices/middle.mp3"
+  },
+  {
+    "image": "./images/2.png",
+    "voice": "./voices/outro.mp3"
+  }
+]
+
+

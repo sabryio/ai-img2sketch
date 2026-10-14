@@ -1,0 +1,14 @@
+{
+  "name": "ai-img2sketch-processor",
+  "version": "1.0.0",
+  "description": "Batch video processor for ai-img2sketch with voice duration detection",
+  "type": "module",
+  "scripts": {
+    "process": "bun run scripts/process-videos.ts",
+    "process:custom": "bun run scripts/process-videos.ts --input",
+    "help": "bun run scripts/process-videos.ts --help"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
