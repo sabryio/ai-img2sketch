@@ -1,0 +1,255 @@
+version: "3"
+
+vars:
+  PYTHON_VERSION: "3.10"
+  SRC_DIR: src
+  TEST_IMAGE: images/cartoon.png
+
+tasks:
+  # Setup and Installation
+  install:
+    desc: Install project dependencies
+    cmds:
+      - uv sync
+
+  install:dev:
+    desc: Install project with dev dependencies
+    cmds:
+      - uv sync --all-extras
+
+  clean:
+    desc: Clean build artifacts and caches
+    cmds:
+      - cmd: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue .venv
+        platforms: [windows]
+      - cmd: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue .ruff_cache
+        platforms: [windows]
+      - cmd: Remove-Item -Recurse -Force -ErrorAction SilentlyContinue __pycache__
+        platforms: [windows]
+      - cmd: Get-ChildItem -Recurse -Filter "*.pyc" | Remove-Item -Force
+        platforms: [windows]
+      - cmd: Get-ChildItem -Recurse -Filter "__pycache__" | Remove-Item -Recurse -Force
+        platforms: [windows]
+      - cmd: rm -rf .venv .ruff_cache __pycache__ **/*.pyc **/__pycache__
+        platforms: [linux, darwin]
+
+  # Code Quality
+  lint:
+    desc: Run ruff linter
+    cmds:
+      - uv run ruff check {{.SRC_DIR}}/
+
+  lint:fix:
+    desc: Run ruff linter and auto-fix issues
+    cmds:
+      - uv run ruff check --fix {{.SRC_DIR}}/
+
+  format:
+    desc: Format code with ruff
+    cmds:
+      - uv run ruff format {{.SRC_DIR}}/
+
+  format:check:
+    desc: Check code formatting without changes
+    cmds:
+      - uv run ruff format --check {{.SRC_DIR}}/
+
+  typecheck:
+    desc: Run ty type checker
+    cmds:
+      - cmd: powershell -Command '$env:VIRTUAL_ENV = (Get-Item .venv).FullName; uv run ty check'
+        platforms: [windows]
+      - cmd: VIRTUAL_ENV=.venv uv run ty check
+        platforms: [linux, darwin]
+
+  check:
+    desc: Run all code quality checks (lint, format, typecheck)
+    cmds:
+      - task: lint
+      - task: format:check
+      - task: typecheck
+
+  fix:
+    desc: Auto-fix all fixable issues
+    cmds:
+      - task: lint:fix
+      - task: format
+
+  # Application Commands
+  run:
+    desc: Run the CLI help
+    cmds:
+      - uv run img2sketch --help
+
+  info:
+    desc: Show information about test image
+    cmds:
+      - uv run img2sketch info {{.TEST_IMAGE}}
+
+  generate:
+    desc: Generate sketch video from test image
+    cmds:
+      - uv run img2sketch generate {{.TEST_IMAGE}}
+
+  generate:fast:
+    desc: Generate sketch video with fast settings
+    cmds:
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 15 --object-skip-rate 12 --bg-skip-rate 20
+
+  generate:detailed:
+    desc: Generate sketch video with detailed settings
+    cmds:
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 8 --object-skip-rate 5 --bg-skip-rate 10
+
+  # Development
+  dev:
+    desc: Start development environment
+    cmds:
+      - task: install
+      - task: check
+
+  watch:lint:
+    desc: Watch files and run linter on changes
+    cmds:
+      - cmd: |
+          while ($true) {
+            uv run ruff check {{.SRC_DIR}}/
+            Start-Sleep -Seconds 2
+          }
+        platforms: [windows]
+
+  # Testing
+  test:
+    desc: Run tests (placeholder - add your test framework)
+    cmds:
+      - echo "No tests configured yet. Add pytest or unittest"
+
+  # Build and Distribution
+  build:
+    desc: Build distribution packages
+    cmds:
+      - uv build
+
+  publish:test:
+    desc: Publish to TestPyPI
+    cmds:
+      - uv publish --publish-url https://test.pypi.org/legacy/
+
+  publish:
+    desc: Publish to PyPI
+    cmds:
+      - uv publish
+
+  # Documentation
+  docs:
+    desc: Show project documentation
+    cmds:
+      - cmd: Get-Content README.md
+        platforms: [windows]
+      - cmd: cat README.md
+        platforms: [linux, darwin]
+
+  # Dependency Management
+  deps:list:
+    desc: List all dependencies
+    cmds:
+      - uv tree
+
+  deps:update:
+    desc: Update all dependencies
+    cmds:
+      - uv sync --upgrade
+
+  deps:add:
+    desc: "Add a new dependency (usage: task deps:add -- package-name)"
+    cmds:
+      - uv add {{.CLI_ARGS}}
+
+  deps:remove:
+    desc: "Remove a dependency (usage: task deps:remove -- package-name)"
+    cmds:
+      - uv remove {{.CLI_ARGS}}
+
+  # Git helpers
+  commit:
+    desc: Stage and commit changes
+    cmds:
+      - task: check
+      - git add .
+      - git status
+
+  # Project Info
+  version:
+    desc: Show CLI version
+    cmds:
+      - uv run img2sketch --version
+
+  info:project:
+    desc: Show project information
+    cmds:
+      - echo "Project - ai-img2sketch"
+      - echo "Version - 0.1.0"
+      - echo "Python - {{.PYTHON_VERSION}}+"
+      - echo "Package Manager - uv"
+      - uv --version
+
+  # Workflows
+  ci:
+    desc: Run CI checks (lint, format check, type check)
+    cmds:
+      - task: lint
+      - task: format:check
+      - task: typecheck
+      - echo "✓ All CI checks passed!"
+
+  pre-commit:
+    desc: Run pre-commit checks
+    cmds:
+      - task: fix
+      - task: typecheck
+
+  release:
+    desc: Prepare for release
+    cmds:
+      - task: clean
+      - task: install
+      - task: ci
+      - task: build
+      - echo "✓ Ready for release!"
+
+  # Examples
+  example:basic:
+    desc: Run basic example
+    cmds:
+      - uv run img2sketch info {{.TEST_IMAGE}}
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 10
+
+  example:custom:
+    desc: Run example with custom settings
+    cmds:
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 12 --frame-rate 30 --object-skip-rate 8 --bg-skip-rate 14 --end-duration 3
+
+  # Help
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  help:
+    desc: Show detailed help for the project
+    cmds:
+      - echo "AI Image to Sketch Video - Task Commands"
+      - echo ""
+      - echo "Quick Start"
+      - echo "  task install      - Install dependencies"
+      - echo "  task info         - Analyze test image"
+      - echo "  task generate     - Generate sketch video"
+      - echo ""
+      - echo "Development"
+      - echo "  task lint         - Check code style"
+      - echo "  task format       - Format code"
+      - echo "  task typecheck    - Run type checker"
+      - echo "  task check        - Run all checks"
+      - echo "  task fix          - Auto-fix issues"
+      - echo ""
+      - echo "For full list - task --list"
