@@ -17,7 +17,8 @@ Convert images to animated sketch videos with a realistic drawing hand effect. T
 
 ## Installation
 
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management.
+You can install `img2sketch` so it's available from any folder on your system,
+or just run it locally with `uv run`.
 
 ### Prerequisites
 
@@ -37,7 +38,40 @@ powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 pip install uv
 ```
 
-### Setup Project
+### Install as a global tool (recommended)
+
+This lets you run `img2sketch` from any directory:
+
+```bash
+# Clone the repository
+git clone <repository-url>
+cd ai-img2sketch
+
+# Install the CLI globally with uv
+uv tool install .
+```
+
+To verify the installation:
+
+```bash
+img2sketch --version
+```
+
+To upgrade later after pulling changes:
+
+```bash
+uv tool install . --force
+```
+
+To uninstall:
+
+```bash
+uv tool uninstall ai-img2sketch
+```
+
+### Run without installing (local only)
+
+If you don't want a global install, run it via `uv` from the project folder:
 
 ```bash
 # Clone the repository
@@ -47,12 +81,8 @@ cd ai-img2sketch
 # Create virtual environment and install dependencies
 uv sync
 
-# Activate the virtual environment
-# On Windows
-.venv\Scripts\activate
-
-# On macOS/Linux
-source .venv/bin/activate
+# Run the CLI using uv
+uv run img2sketch --help
 ```
 
 ## Quick Start with Task
@@ -84,22 +114,28 @@ See all available tasks: `task --list`
 
 ```bash
 # Generate a sketch video -> input.mp4 (written next to the image)
+img2sketch generate input.jpg
+
+# Or with uv (no global install)
 uv run img2sketch generate input.jpg
 
 # Or using the main script
 uv run python main.py generate input.jpg
 
+# Generate from current directory
+img2sketch generate .
+
 # Send the video to a different directory instead
-uv run img2sketch generate input.jpg --output ./my_videos
+img2sketch generate input.jpg --output ./my_videos
 
 # With custom parameters
-uv run img2sketch generate input.jpg \
+img2sketch generate input.jpg \
     --split-len 15 \
     --frame-rate 30 \
     --object-skip-rate 10
 
 # Generate a video for every image in a folder
-uv run img2sketch generate ./my_images
+img2sketch generate ./my_images
 ```
 
 ### Folder (Batch) Mode
@@ -110,10 +146,13 @@ next to its source and named after it (`photo.jpg` → `photo.mp4`):
 
 ```bash
 # Every image in ./my_images -> ./my_images/<name>.mp4
-uv run img2sketch generate ./my_images
+img2sketch generate ./my_images
+
+# Generate from current directory
+img2sketch generate .
 
 # Or send every video to a single folder instead
-uv run img2sketch generate ./my_images --output ./videos
+img2sketch generate ./my_images --output ./videos
 ```
 
 Batch mode:
@@ -130,10 +169,10 @@ Batch mode:
 
 ```bash
 # Analyze image and get recommendations
-uv run img2sketch info input.jpg
+img2sketch info input.jpg
 
 # Check compatibility with specific split length
-uv run img2sketch info input.jpg --split-len 20
+img2sketch info input.jpg --split-len 20
 ```
 
 ### CLI Options
@@ -171,7 +210,7 @@ With `--object-masks` you can split it into named objects and control the order
 in which they are drawn, plus a per-object drawing speed:
 
 ```bash
-uv run img2sketch generate input.jpg --object-masks objects.json
+img2sketch generate input.jpg --object-masks objects.json
 ```
 
 The mask file is JSON. Objects are drawn in the order they appear:
