@@ -44,6 +44,16 @@ def test_info_rejects_missing_file(tmp_path: Path) -> None:
     assert result.exit_code != 0
 
 
+def test_generate_on_a_single_image_writes_next_to_it_by_default(tmp_path: Path) -> None:
+    image_path = tmp_path / "sample.png"
+    _write_image(image_path)
+
+    result = CliRunner().invoke(cli, ["generate", str(image_path), "--end-duration", "0"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / "sample.mp4").exists()
+
+
 def test_generate_on_a_single_image_writes_to_the_output_directory(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     _write_image(image_path)

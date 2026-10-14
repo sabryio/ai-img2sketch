@@ -4,6 +4,7 @@ from .dimension_adjuster import DimensionAdjuster
 from .drawing_calculator import DrawingPathCalculator, GridCalculator
 from .drawing_planner import DrawingGroup, DrawingPlanner
 from .hand_overlay import HandOverlayService
+from .video_path_resolver import VideoPathResolver
 
 __all__ = [
     "DimensionAdjuster",
@@ -12,4 +13,5 @@ __all__ = [
     "DrawingPlanner",
     "GridCalculator",
     "HandOverlayService",
+    "VideoPathResolver",
 ]

@@ -36,7 +36,7 @@ class FakeImageLoader(ImageLoader):
 
 class FakeSketchGenerator(SketchVideoGenerator):
     def __init__(self, fail_for: set[Path] | None = None) -> None:
-        self.calls: list[tuple[Path | None, Path | None, Path | None]] = []
+        self.calls: list[tuple[Path | None, Path, Path | None]] = []
         self._fail_for = fail_for or set()
 
     def execute(
@@ -44,14 +44,13 @@ class FakeSketchGenerator(SketchVideoGenerator):
         image: Image,
         config: VideoConfig,  # noqa: ARG002
         *,
-        output_path: Path | None = None,
+        output_path: Path,
         object_mask_path: Path | None = None,
     ) -> Path:
         self.calls.append((image.path, output_path, object_mask_path))
         if image.path in self._fail_for:
             assert image.path is not None
             raise RuntimeError(f"boom: {image.path.name}")
-        assert output_path is not None
         return output_path
 
 

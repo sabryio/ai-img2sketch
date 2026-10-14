@@ -18,7 +18,6 @@ from ...domain.value_objects.video_config import VideoConfig
 from ..ports.hand_loader import HandLoader
 from ..ports.image_preprocessor import ImagePreprocessor, PreprocessedImage
 from ..ports.object_mask_loader import ObjectMaskLoader
-from ..ports.output_path_generator import OutputPathGenerator
 from ..ports.video_writer import VideoWriter, VideoWriterFactory
 from ..services.dimension_adjuster import DimensionAdjuster
 from ..services.drawing_calculator import DrawingPathCalculator, GridCalculator
@@ -43,18 +42,14 @@ class GenerateSketchVideoUseCase:
         preprocessor: ImagePreprocessor,
         object_mask_loader: ObjectMaskLoader,
         video_writer_factory: VideoWriterFactory,
-        output_path_generator: OutputPathGenerator,
-        output_directory: Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._hand_image_path = hand_image_path
         self._hand_mask_path = hand_mask_path
-        self._output_directory = output_directory
         self._hand_loader = hand_loader
         self._preprocessor = preprocessor
         self._object_mask_loader = object_mask_loader
         self._video_writer_factory = video_writer_factory
-        self._output_path_generator = output_path_generator
         self._logger = logger if logger is not None else logging.getLogger(__name__)
 
         # Pure, side-effect-free services are safe to instantiate directly.
@@ -69,7 +64,7 @@ class GenerateSketchVideoUseCase:
         image: Image,
         config: VideoConfig,
         *,
-        output_path: Path | None = None,
+        output_path: Path,
         object_mask_path: Path | None = None,
     ) -> Path:
         """Generate a sketch video for the given image and configuration.
@@ -77,8 +72,7 @@ class GenerateSketchVideoUseCase:
         Args:
             image: The source image to turn into a sketch video.
             config: Video generation configuration.
-            output_path: Explicit destination for the video. When omitted, a path
-                is generated inside ``output_directory``.
+            output_path: Destination of the video, e.g. ``photo.jpg`` → ``photo.mp4``.
             object_mask_path: Optional object-mask document for this image.
 
         Returns:
@@ -108,10 +102,6 @@ class GenerateSketchVideoUseCase:
         )
         preprocessed = self._preprocessor.preprocess(image, target_dimensions)
 
-        if output_path is None:
-            if self._output_directory is None:
-                raise ValueError("Either output_path or output_directory must be provided")
-            output_path = self._output_path_generator.generate(self._output_directory)
         video = Video(output_path=output_path, dimensions=target_dimensions, config=config)
 
         writer = self._video_writer_factory(video)

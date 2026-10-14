@@ -10,6 +10,7 @@ from ...domain.value_objects.video_config import VideoConfig
 from ..ports.image_loader import ImageLoader
 from ..ports.image_scanner import ImageDirectoryScanner
 from ..ports.sketch_video_generator import SketchVideoGenerator
+from ..services.video_path_resolver import VideoPathResolver
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class GenerateVideosFromDirectoryUseCase:
         self._image_loader = image_loader
         self._scanner = scanner
         self._sketch_use_case = sketch_use_case
+        self._path_resolver = VideoPathResolver()
         self._logger = logger if logger is not None else logging.getLogger(__name__)
 
     def execute(
@@ -106,8 +108,7 @@ class GenerateVideosFromDirectoryUseCase:
         object_mask_path: Path | None,
     ) -> BatchItemResult:
         """Generate a video for one image, capturing any failure."""
-        destination = output_directory if output_directory is not None else image_path.parent
-        output_path = destination / f"{image_path.stem}.mp4"
+        output_path = self._path_resolver.resolve(image_path, output_directory)
         self._logger.info("Processing %s -> %s", image_path.name, output_path.name)
 
         try:

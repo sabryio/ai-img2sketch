@@ -61,7 +61,6 @@ on abstractions it defines itself.
 - **ObjectMaskLoader**: load ordered object masks
 - **SketchVideoGenerator**: generate one sketch video (implemented by the single-image use case)
 - **VideoWriter** / **VideoWriterFactory**: write frames
-- **OutputPathGenerator**: choose an output path
 
 These are `typing.Protocol` definitions. The application never imports
 infrastructure; infrastructure imports the ports.
@@ -72,6 +71,8 @@ infrastructure; infrastructure imports the ports.
 - **DrawingPathCalculator**: nearest-neighbour drawing order
 - **DrawingPlanner**: groups grid cells into ordered, per-object drawing groups
 - **HandOverlayService**: composites the hand onto a frame
+- **VideoPathResolver**: names each video after its image (`<name>.mp4`) next to
+  it, or inside an explicit output directory
 
 These are stateless and side-effect free, so they are used directly (not
 injected) and are trivially unit-testable.
@@ -98,7 +99,6 @@ or the filesystem lives here.
 - **JsonObjectMaskLoader** implements `ObjectMaskLoader`
 - **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
   implements `VideoWriterFactory`
-- **TimestampedOutputPathGenerator** implements `OutputPathGenerator`
 
 ### 4. Presentation Layer (`src/ai_img2sketch/presentation/`)
 
@@ -137,7 +137,7 @@ another (the real adapters and the test fakes are interchangeable).
 
 ### Interface Segregation
 Ports are intentionally tiny (`VideoWriter` has just `write_frame` and
-`release`; `OutputPathGenerator` has just `generate`).
+`release`; `SketchVideoGenerator` has just `execute`).
 
 ### Dependency Inversion
 High-level policy (use case, services) depends on the ports it owns; low-level
@@ -149,7 +149,7 @@ detail (OpenCV) depends on those ports. The dependency arrow is inverted.
 CLI (composition root)
     ↓ builds adapters + use case
 GenerateSketchVideoUseCase  (single image)
-    ↓ uses ports (ImageLoader, HandLoader, ImagePreprocessor, ObjectMaskLoader, VideoWriter, OutputPathGenerator)
+    ↓ uses ports (HandLoader, ImagePreprocessor, ObjectMaskLoader, VideoWriter)
     ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, DrawingPlanner, HandOverlayService)
 Domain entities + value objects
     ↓ (adapters translate to/from OpenCV + disk)

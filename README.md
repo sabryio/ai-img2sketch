@@ -83,13 +83,13 @@ See all available tasks: `task --list`
 ### Basic Usage
 
 ```bash
-# Generate sketch video from an image (using uv)
+# Generate a sketch video -> input.mp4 (written next to the image)
 uv run img2sketch generate input.jpg
 
 # Or using the main script
 uv run python main.py generate input.jpg
 
-# With custom output directory
+# Send the video to a different directory instead
 uv run img2sketch generate input.jpg --output ./my_videos
 
 # With custom parameters
@@ -105,8 +105,8 @@ uv run img2sketch generate ./my_images
 ### Folder (Batch) Mode
 
 Pass a folder instead of an image file and one video is generated for every
-image found directly inside it. Each video is written next to its source image,
-named after it (`photo.jpg` → `photo.mp4`):
+image found directly inside it. Just like a single image, each video is written
+next to its source and named after it (`photo.jpg` → `photo.mp4`):
 
 ```bash
 # Every image in ./my_images -> ./my_images/<name>.mp4
@@ -145,8 +145,7 @@ Arguments:
   SOURCE                        An image file, or a folder of images
 
 Options:
-  -o, --output PATH              Output directory (file: default ./save_videos,
-                                 folder: next to each image)
+  -o, --output PATH              Output directory (default: next to each image)
   --split-len INTEGER           Grid split length [5-100] (default: 10)
   --frame-rate INTEGER          Video frame rate [1-120] (default: 25)
   --object-skip-rate INTEGER    Object drawing skip rate [1-100] (default: 8)
@@ -230,14 +229,14 @@ ai-img2sketch/
 │   │   │   ├── image_preprocessor.py
 │   │   │   ├── image_scanner.py
 │   │   │   ├── object_mask_loader.py
-│   │   │   ├── output_path_generator.py
 │   │   │   ├── sketch_video_generator.py
 │   │   │   └── video_writer.py
 │   │   ├── services/             # Pure, stateless business logic
 │   │   │   ├── dimension_adjuster.py
 │   │   │   ├── drawing_calculator.py
 │   │   │   ├── drawing_planner.py
-│   │   │   └── hand_overlay.py
+│   │   │   ├── hand_overlay.py
+│   │   │   └── video_path_resolver.py
 │   │   └── use_cases/
 │   │       ├── generate_sketch_video.py   # Single image
 │   │       └── generate_batch_videos.py   # Whole folder
@@ -249,8 +248,7 @@ ai-img2sketch/
 │   │   │   ├── object_mask_loader.py  # JsonObjectMaskLoader
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
-│   │       ├── video_writer.py           # OpenCVVideoWriter
-│   │       └── output_path_generator.py
+│   │       └── video_writer.py           # OpenCVVideoWriter
 │   └── presentation/              # Presentation layer (CLI)
 │       ├── cli.py                # Click CLI interface
 │       └── composition.py        # Composition root (wires everything)
@@ -258,11 +256,10 @@ ai-img2sketch/
 ├── main.py                       # Entry point
 ├── pyproject.toml               # Project configuration
 ├── uv.lock                      # Locked dependencies
-├── images/                      # Hand images, masks and mask examples
-│   ├── drawing-hand.png
-│   ├── hand-mask.png
-│   └── example-object-masks.json
-└── save_videos/                # Output directory
+└── images/                      # Hand images, masks and mask examples
+    ├── drawing-hand.png
+    ├── hand-mask.png
+    └── example-object-masks.json
 ```
 
 ### Architecture Layers
@@ -382,7 +379,8 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 ### Video Not Generating
 
 - Dimensions are automatically rounded to a multiple of the split length
-- Check that the `save_videos` directory exists
+- Videos are written next to their source image as `<name>.mp4` (or into
+  `--output` when given); make sure that folder is writable
 - Verify all dependencies are installed correctly
 
 ### Performance Issues

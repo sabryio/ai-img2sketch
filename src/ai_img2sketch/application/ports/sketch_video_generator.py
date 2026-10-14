@@ -19,7 +19,7 @@ class SketchVideoGenerator(Protocol):
         image: Image,
         config: VideoConfig,
         *,
-        output_path: Path | None = None,
+        output_path: Path,
         object_mask_path: Path | None = None,
     ) -> Path:
         """Generate and return the video path for ``image``."""

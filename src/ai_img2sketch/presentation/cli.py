@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..application.services.dimension_adjuster import DimensionAdjuster
+from ..application.services.video_path_resolver import VideoPathResolver
 from ..application.use_cases.generate_batch_videos import BatchSummary
 from ..domain.value_objects.video_config import VideoConfig
 from .composition import (
@@ -36,7 +37,7 @@ def cli() -> None:
     "--output",
     type=click.Path(path_type=Path),
     default=None,
-    help="Output directory (file: default ./save_videos, folder: next to each image)",
+    help="Output directory (default: next to each image)",
 )
 @click.option(
     "--split-len",
@@ -94,7 +95,8 @@ def generate(
     """Generate sketch video(s) from an image or a folder of images.
 
     Pass an image file to produce a single video, or a folder to produce one
-    video per image found directly inside it.
+    video per image found directly inside it. Each video is named after its
+    image (``photo.jpg`` -> ``photo.mp4``) and written next to it.
 
     Example:
         img2sketch generate input.jpg
@@ -216,8 +218,7 @@ def _generate_single(
     hand_mask: Path,
 ) -> None:
     """Generate a single video from one image file."""
-    if output is None:
-        output = PROJECT_ROOT / "save_videos"
+    output_path = VideoPathResolver().resolve(image, output)
 
     image_loader = create_image_loader()
     with console.status("[bold yellow]Loading image...", spinner="dots"):
@@ -229,6 +230,7 @@ def _generate_single(
     )
     if object_masks is not None:
         console.print(f"  Object masks: [cyan]{object_masks.name}[/cyan]")
+    console.print(f"  Output: [cyan]{output_path}[/cyan]")
 
     _display_config(config)
     console.print("\n[bold yellow]Generating sketch video...[/bold yellow]\n")
@@ -236,14 +238,15 @@ def _generate_single(
     use_case = build_generate_sketch_video_use_case(
         hand_image_path=hand_image,
         hand_mask_path=hand_mask,
-        output_directory=output,
     )
-    output_path = use_case.execute(source_image, config, object_mask_path=object_masks)
+    produced_path = use_case.execute(
+        source_image, config, output_path=output_path, object_mask_path=object_masks
+    )
 
     console.print(
         Panel.fit(
             f"[bold green]✓ Video generated successfully![/bold green]\n\n"
-            f"Output: [cyan]{output_path}[/cyan]",
+            f"Output: [cyan]{produced_path}[/cyan]",
             border_style="green",
         )
     )

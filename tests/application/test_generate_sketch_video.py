@@ -8,7 +8,6 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-import pytest
 
 from ai_img2sketch.application.ports.hand_loader import HandLoader
 from ai_img2sketch.application.ports.image_preprocessor import (
@@ -16,7 +15,6 @@ from ai_img2sketch.application.ports.image_preprocessor import (
     PreprocessedImage,
 )
 from ai_img2sketch.application.ports.object_mask_loader import ObjectMaskLoader
-from ai_img2sketch.application.ports.output_path_generator import OutputPathGenerator
 from ai_img2sketch.application.ports.video_writer import VideoWriter, VideoWriterFactory
 from ai_img2sketch.application.use_cases.generate_sketch_video import GenerateSketchVideoUseCase
 from ai_img2sketch.domain.entities.hand import Hand
@@ -80,14 +78,6 @@ class FakeVideoWriterFactory(VideoWriterFactory):
         return self.writer
 
 
-class FakeOutputPathGenerator(OutputPathGenerator):
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def generate(self, output_directory: Path) -> Path:  # noqa: ARG002
-        return self._path
-
-
 def _make_hand() -> Hand:
     # A no-op hand: inverse_mask=1 keeps the frame, transparent hand adds nothing.
     return Hand(
@@ -120,29 +110,25 @@ def _region(shape: tuple[int, int], rows: tuple[int, int]) -> npt.NDArray[np.boo
 def _build_use_case(
     tmp_path: Path,
     factory: FakeVideoWriterFactory,
-    output_path: Path,
     object_masks: list[ObjectMask] | None = None,
-    with_output_directory: bool = True,
 ) -> GenerateSketchVideoUseCase:
     return GenerateSketchVideoUseCase(
         hand_image_path=tmp_path / "hand.png",
         hand_mask_path=tmp_path / "mask.png",
-        output_directory=tmp_path if with_output_directory else None,
         hand_loader=FakeHandLoader(_make_hand()),
         preprocessor=FakeImagePreprocessor(),
         object_mask_loader=FakeObjectMaskLoader(object_masks or []),
         video_writer_factory=factory,
-        output_path_generator=FakeOutputPathGenerator(output_path),
     )
 
 
 def test_execute_returns_output_path_releases_writer_and_writes_frames(tmp_path: Path) -> None:
     factory = FakeVideoWriterFactory()
     output_path = tmp_path / "out.mp4"
-    use_case = _build_use_case(tmp_path, factory, output_path)
+    use_case = _build_use_case(tmp_path, factory)
 
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    result = use_case.execute(_make_image_with_black_cells(), config)
+    result = use_case.execute(_make_image_with_black_cells(), config, output_path=output_path)
 
     assert result == output_path
     assert factory.writer.released
@@ -150,12 +136,24 @@ def test_execute_returns_output_path_releases_writer_and_writes_frames(tmp_path:
     assert len(factory.writer.frames) == 2
 
 
+def test_execute_writes_to_the_given_output_path(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    target = tmp_path / "custom" / "name.mp4"
+    use_case = _build_use_case(tmp_path, factory)
+
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
+    result = use_case.execute(_make_image_with_black_cells(), config, output_path=target)
+
+    assert result == target
+    assert factory.created_for[0].output_path == target
+
+
 def test_execute_adds_final_frames(tmp_path: Path) -> None:
     factory = FakeVideoWriterFactory()
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4")
+    use_case = _build_use_case(tmp_path, factory)
 
     config = VideoConfig(frame_rate=2, split_len=2, object_skip_rate=100, end_duration_sec=1)
-    use_case.execute(_make_image_with_black_cells(), config)
+    use_case.execute(_make_image_with_black_cells(), config, output_path=tmp_path / "out.mp4")
 
     # object_skip_rate=100 means no drawing frames; only the final frames remain.
     assert len(factory.writer.frames) == 2
@@ -163,12 +161,12 @@ def test_execute_adds_final_frames(tmp_path: Path) -> None:
 
 def test_execute_handles_image_without_black_pixels(tmp_path: Path) -> None:
     factory = FakeVideoWriterFactory()
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4")
+    use_case = _build_use_case(tmp_path, factory)
 
     white = Image.from_array(np.full((4, 4, 3), 255, dtype=np.uint8))
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
 
-    use_case.execute(white, config)
+    use_case.execute(white, config, output_path=tmp_path / "out.mp4")
 
     assert factory.writer.released
     assert factory.writer.frames == []
@@ -180,10 +178,15 @@ def test_object_masks_draw_in_document_order(tmp_path: Path) -> None:
         ObjectMask(name="top", region=_region((6, 6), (0, 3)), skip_rate=1),
         ObjectMask(name="bottom", region=_region((6, 6), (3, 6)), skip_rate=1),
     ]
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", object_masks=masks)
+    use_case = _build_use_case(tmp_path, factory, object_masks=masks)
 
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    use_case.execute(_make_6x6_image(), config, object_mask_path=tmp_path / "objects.json")
+    use_case.execute(
+        _make_6x6_image(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        object_mask_path=tmp_path / "objects.json",
+    )
 
     assert len(factory.writer.frames) == 2
     first, second = factory.writer.frames
@@ -200,32 +203,16 @@ def test_object_mask_skip_rate_is_honoured(tmp_path: Path) -> None:
         ObjectMask(name="top", region=_region((6, 6), (0, 3)), skip_rate=1),
         ObjectMask(name="bottom", region=_region((6, 6), (3, 6)), skip_rate=2),
     ]
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", object_masks=masks)
+    use_case = _build_use_case(tmp_path, factory, object_masks=masks)
 
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    use_case.execute(_make_6x6_image(), config, object_mask_path=tmp_path / "objects.json")
+    use_case.execute(
+        _make_6x6_image(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        object_mask_path=tmp_path / "objects.json",
+    )
 
     # Only the first object's single cell is emitted (bottom has skip_rate=2).
     assert len(factory.writer.frames) == 1
     assert factory.writer.frames[0][0, 0, 0] == 0
-
-
-def test_execute_uses_explicit_output_path(tmp_path: Path) -> None:
-    factory = FakeVideoWriterFactory()
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "ignored.mp4")
-    target = tmp_path / "custom" / "name.mp4"
-
-    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    result = use_case.execute(_make_image_with_black_cells(), config, output_path=target)
-
-    assert result == target
-    assert factory.created_for[0].output_path == target
-
-
-def test_execute_requires_an_output_destination(tmp_path: Path) -> None:
-    factory = FakeVideoWriterFactory()
-    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", with_output_directory=False)
-
-    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    with pytest.raises(ValueError, match="output_path or output_directory"):
-        use_case.execute(_make_image_with_black_cells(), config)
