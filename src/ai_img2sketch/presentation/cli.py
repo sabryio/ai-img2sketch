@@ -9,10 +9,17 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..application.services.dimension_adjuster import DimensionAdjuster
+from ..application.use_cases.generate_batch_videos import BatchSummary
 from ..domain.value_objects.video_config import VideoConfig
-from .composition import build_generate_sketch_video_use_case, create_image_loader
+from .composition import (
+    build_generate_sketch_video_use_case,
+    build_generate_videos_from_directory_use_case,
+    create_image_loader,
+)
 
 console = Console()
+
+PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 
 
 @click.group()
@@ -23,13 +30,13 @@ def cli() -> None:
 
 
 @cli.command()
-@click.argument("image", type=click.Path(exists=True, path_type=Path))
+@click.argument("source", type=click.Path(exists=True, path_type=Path))
 @click.option(
     "-o",
     "--output",
     type=click.Path(path_type=Path),
     default=None,
-    help="Output directory for video (default: ./save_videos)",
+    help="Output directory (file: default ./save_videos, folder: next to each image)",
 )
 @click.option(
     "--split-len",
@@ -74,7 +81,7 @@ def cli() -> None:
     help="JSON file describing ordered object masks (see README)",
 )
 def generate(
-    image: Path,
+    source: Path,
     output: Path | None,
     split_len: int,
     frame_rate: int,
@@ -84,45 +91,22 @@ def generate(
     hand_mask: Path | None,
     object_masks: Path | None,
 ) -> None:
-    """Generate a sketch video from an image.
+    """Generate sketch video(s) from an image or a folder of images.
+
+    Pass an image file to produce a single video, or a folder to produce one
+    video per image found directly inside it.
 
     Example:
         img2sketch generate input.jpg
-        img2sketch generate input.jpg --split-len 15 --frame-rate 30
+        img2sketch generate ./photos --split-len 15 --frame-rate 30
     """
+    exit_code = 0
     try:
-        console.print(
-            Panel.fit(
-                "[bold cyan]AI Image to Sketch Video Generator[/bold cyan]",
-                border_style="cyan",
-            )
-        )
+        _print_banner()
 
-        project_root = Path(__file__).parent.parent.parent.parent
-        if output is None:
-            output = project_root / "save_videos"
-        if hand_image is None:
-            hand_image = project_root / "images" / "drawing-hand.png"
-        if hand_mask is None:
-            hand_mask = project_root / "images" / "hand-mask.png"
-
-        if not hand_image.exists():
-            console.print(f"[red]Error: Hand image not found: {hand_image}[/red]")
-            raise click.Abort()
-        if not hand_mask.exists():
-            console.print(f"[red]Error: Hand mask not found: {hand_mask}[/red]")
-            raise click.Abort()
-
-        image_loader = create_image_loader()
-        with console.status("[bold yellow]Loading image...", spinner="dots"):
-            source_image = image_loader.load(image)
-
-        console.print(f"[green]✓[/green] Loaded image: [cyan]{image.name}[/cyan]")
-        console.print(
-            f"  Dimensions: [cyan]{source_image.dimensions.width}x{source_image.dimensions.height}[/cyan]"
-        )
-        if object_masks is not None:
-            console.print(f"  Object masks: [cyan]{object_masks.name}[/cyan]")
+        hand_image = hand_image or PROJECT_ROOT / "images" / "drawing-hand.png"
+        hand_mask = hand_mask or PROJECT_ROOT / "images" / "hand-mask.png"
+        _require_hand_files(hand_image, hand_mask)
 
         config = VideoConfig(
             frame_rate=frame_rate,
@@ -131,31 +115,21 @@ def generate(
             end_duration_sec=end_duration,
         )
 
-        _display_config(config, split_len)
-
-        console.print("\n[bold yellow]Generating sketch video...[/bold yellow]\n")
-
-        use_case = build_generate_sketch_video_use_case(
-            hand_image_path=hand_image,
-            hand_mask_path=hand_mask,
-            output_directory=output,
-            object_mask_path=object_masks,
-        )
-        output_path = use_case.execute(source_image, config)
-
-        console.print(
-            Panel.fit(
-                f"[bold green]✓ Video generated successfully![/bold green]\n\n"
-                f"Output: [cyan]{output_path}[/cyan]",
-                border_style="green",
+        if source.is_dir():
+            exit_code = _generate_directory(
+                source, config, output, object_masks, hand_image, hand_mask
             )
-        )
+        else:
+            _generate_single(source, config, output, object_masks, hand_image, hand_mask)
 
     except click.Abort:
         raise
     except Exception as e:
         console.print(f"\n[bold red]Error:[/bold red] {e}")
         raise click.Abort() from e
+
+    if exit_code != 0:
+        raise SystemExit(exit_code)
 
 
 @cli.command()
@@ -213,14 +187,126 @@ def info(image: Path, split_len: int) -> None:
         raise click.Abort() from e
 
 
-def _display_config(config: VideoConfig, split_len: int) -> None:
+def _print_banner() -> None:
+    """Print the application banner."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]AI Image to Sketch Video Generator[/bold cyan]",
+            border_style="cyan",
+        )
+    )
+
+
+def _require_hand_files(hand_image: Path, hand_mask: Path) -> None:
+    """Abort early if the hand image or mask is missing."""
+    if not hand_image.exists():
+        console.print(f"[red]Error: Hand image not found: {hand_image}[/red]")
+        raise click.Abort()
+    if not hand_mask.exists():
+        console.print(f"[red]Error: Hand mask not found: {hand_mask}[/red]")
+        raise click.Abort()
+
+
+def _generate_single(
+    image: Path,
+    config: VideoConfig,
+    output: Path | None,
+    object_masks: Path | None,
+    hand_image: Path,
+    hand_mask: Path,
+) -> None:
+    """Generate a single video from one image file."""
+    if output is None:
+        output = PROJECT_ROOT / "save_videos"
+
+    image_loader = create_image_loader()
+    with console.status("[bold yellow]Loading image...", spinner="dots"):
+        source_image = image_loader.load(image)
+
+    console.print(f"[green]✓[/green] Loaded image: [cyan]{image.name}[/cyan]")
+    console.print(
+        f"  Dimensions: [cyan]{source_image.dimensions.width}x{source_image.dimensions.height}[/cyan]"
+    )
+    if object_masks is not None:
+        console.print(f"  Object masks: [cyan]{object_masks.name}[/cyan]")
+
+    _display_config(config)
+    console.print("\n[bold yellow]Generating sketch video...[/bold yellow]\n")
+
+    use_case = build_generate_sketch_video_use_case(
+        hand_image_path=hand_image,
+        hand_mask_path=hand_mask,
+        output_directory=output,
+    )
+    output_path = use_case.execute(source_image, config, object_mask_path=object_masks)
+
+    console.print(
+        Panel.fit(
+            f"[bold green]✓ Video generated successfully![/bold green]\n\n"
+            f"Output: [cyan]{output_path}[/cyan]",
+            border_style="green",
+        )
+    )
+
+
+def _generate_directory(
+    directory: Path,
+    config: VideoConfig,
+    output: Path | None,
+    object_masks: Path | None,
+    hand_image: Path,
+    hand_mask: Path,
+) -> int:
+    """Generate one video per image found in a folder. Returns an exit code."""
+    console.print(f"[green]✓[/green] Processing folder: [cyan]{directory}[/cyan]")
+
+    _display_config(config)
+    console.print("\n[bold yellow]Generating a video for every image...[/bold yellow]\n")
+
+    use_case = build_generate_videos_from_directory_use_case(
+        hand_image_path=hand_image,
+        hand_mask_path=hand_mask,
+    )
+    summary = use_case.execute(
+        directory, config, output_directory=output, object_mask_path=object_masks
+    )
+    _display_batch_summary(summary)
+    return 0 if not summary.failed else 1
+
+
+def _display_batch_summary(summary: BatchSummary) -> None:
+    """Render the outcome of a batch run."""
+    table = Table(title="Batch Results", show_header=True)
+    table.add_column("Image", style="cyan", no_wrap=True)
+    table.add_column("Status", no_wrap=True)
+    table.add_column("Output")
+
+    for item in summary.items:
+        if item.succeeded:
+            table.add_row(item.image_path.name, "[green]✓ done[/green]", str(item.output_path))
+        else:
+            table.add_row(item.image_path.name, "[red]✗ failed[/red]", f"[red]{item.error}[/red]")
+    console.print(table)
+
+    total = len(summary.items)
+    succeeded = len(summary.succeeded)
+    failed = len(summary.failed)
+    if failed:
+        console.print(
+            f"\n[bold yellow]{succeeded}/{total} succeeded, {failed} failed.[/bold yellow]"
+        )
+    else:
+        console.print(f"\n[bold green]✓ All {total} video(s) generated successfully![/bold green]")
+
+
+def _display_config(config: VideoConfig) -> None:
     """Display configuration table."""
     table = Table(title="Video Configuration", show_header=True)
     table.add_column("Setting", style="cyan", no_wrap=True)
     table.add_column("Value", style="magenta")
 
     table.add_row("Frame Rate", f"{config.frame_rate} fps")
-    table.add_row("Split Length", str(split_len))
+    table.add_row("Split Length", str(config.split_len))
     table.add_row("Object Skip Rate", str(config.object_skip_rate))
     table.add_row("End Duration", f"{config.end_duration_sec} seconds")
 

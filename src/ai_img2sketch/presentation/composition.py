@@ -7,9 +7,11 @@ infrastructure. Everything else depends on abstractions (ports).
 from pathlib import Path
 
 from ..application.ports.image_loader import ImageLoader
+from ..application.use_cases.generate_batch_videos import GenerateVideosFromDirectoryUseCase
 from ..application.use_cases.generate_sketch_video import GenerateSketchVideoUseCase
 from ..infrastructure.image_processing.hand_loader import OpenCVHandLoader
 from ..infrastructure.image_processing.image_loader import OpenCVImageLoader
+from ..infrastructure.image_processing.image_scanner import FileSystemImageScanner
 from ..infrastructure.image_processing.object_mask_loader import JsonObjectMaskLoader
 from ..infrastructure.image_processing.preprocessor import OpenCVImagePreprocessor
 from ..infrastructure.video.output_path_generator import TimestampedOutputPathGenerator
@@ -25,18 +27,32 @@ def build_generate_sketch_video_use_case(
     *,
     hand_image_path: Path,
     hand_mask_path: Path,
-    output_directory: Path,
-    object_mask_path: Path | None = None,
+    output_directory: Path | None = None,
 ) -> GenerateSketchVideoUseCase:
     """Build the ``GenerateSketchVideoUseCase`` with its concrete dependencies."""
     return GenerateSketchVideoUseCase(
         hand_image_path=hand_image_path,
         hand_mask_path=hand_mask_path,
         output_directory=output_directory,
-        object_mask_path=object_mask_path,
         hand_loader=OpenCVHandLoader(),
         preprocessor=OpenCVImagePreprocessor(),
         object_mask_loader=JsonObjectMaskLoader(),
         video_writer_factory=create_opencv_video_writer,
         output_path_generator=TimestampedOutputPathGenerator(),
+    )
+
+
+def build_generate_videos_from_directory_use_case(
+    *,
+    hand_image_path: Path,
+    hand_mask_path: Path,
+) -> GenerateVideosFromDirectoryUseCase:
+    """Build the ``GenerateVideosFromDirectoryUseCase`` with its dependencies."""
+    return GenerateVideosFromDirectoryUseCase(
+        image_loader=OpenCVImageLoader(),
+        scanner=FileSystemImageScanner(),
+        sketch_use_case=build_generate_sketch_video_use_case(
+            hand_image_path=hand_image_path,
+            hand_mask_path=hand_mask_path,
+        ),
     )

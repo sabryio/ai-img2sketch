@@ -108,6 +108,11 @@ tasks:
     cmds:
       - uv run img2sketch generate {{.TEST_IMAGE}} --object-masks images/example-object-masks.json
 
+  generate:folder:
+    desc: "Generate a video per image in a folder (usage: task generate:folder -- ./my-images)"
+    cmds:
+      - uv run img2sketch generate {{.CLI_ARGS}}
+
   # Development
   dev:
     desc: Start development environment
@@ -253,6 +258,7 @@ tasks:
       - echo "  task install      - Install dependencies"
       - echo "  task info         - Analyze test image"
       - echo "  task generate     - Generate sketch video"
+      - echo "  task generate:folder - Generate a video per image in a folder"
       - echo ""
       - echo "Development"
       - echo "  task lint         - Check code style"

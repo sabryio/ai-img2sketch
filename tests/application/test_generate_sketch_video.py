@@ -8,6 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+import pytest
 
 from ai_img2sketch.application.ports.hand_loader import HandLoader
 from ai_img2sketch.application.ports.image_preprocessor import (
@@ -121,12 +122,12 @@ def _build_use_case(
     factory: FakeVideoWriterFactory,
     output_path: Path,
     object_masks: list[ObjectMask] | None = None,
+    with_output_directory: bool = True,
 ) -> GenerateSketchVideoUseCase:
     return GenerateSketchVideoUseCase(
         hand_image_path=tmp_path / "hand.png",
         hand_mask_path=tmp_path / "mask.png",
-        output_directory=tmp_path,
-        object_mask_path=tmp_path / "objects.json" if object_masks else None,
+        output_directory=tmp_path if with_output_directory else None,
         hand_loader=FakeHandLoader(_make_hand()),
         preprocessor=FakeImagePreprocessor(),
         object_mask_loader=FakeObjectMaskLoader(object_masks or []),
@@ -182,7 +183,7 @@ def test_object_masks_draw_in_document_order(tmp_path: Path) -> None:
     use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", object_masks=masks)
 
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    use_case.execute(_make_6x6_image(), config)
+    use_case.execute(_make_6x6_image(), config, object_mask_path=tmp_path / "objects.json")
 
     assert len(factory.writer.frames) == 2
     first, second = factory.writer.frames
@@ -202,8 +203,29 @@ def test_object_mask_skip_rate_is_honoured(tmp_path: Path) -> None:
     use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", object_masks=masks)
 
     config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
-    use_case.execute(_make_6x6_image(), config)
+    use_case.execute(_make_6x6_image(), config, object_mask_path=tmp_path / "objects.json")
 
     # Only the first object's single cell is emitted (bottom has skip_rate=2).
     assert len(factory.writer.frames) == 1
     assert factory.writer.frames[0][0, 0, 0] == 0
+
+
+def test_execute_uses_explicit_output_path(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    use_case = _build_use_case(tmp_path, factory, tmp_path / "ignored.mp4")
+    target = tmp_path / "custom" / "name.mp4"
+
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
+    result = use_case.execute(_make_image_with_black_cells(), config, output_path=target)
+
+    assert result == target
+    assert factory.created_for[0].output_path == target
+
+
+def test_execute_requires_an_output_destination(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    use_case = _build_use_case(tmp_path, factory, tmp_path / "out.mp4", with_output_directory=False)
+
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
+    with pytest.raises(ValueError, match="output_path or output_directory"):
+        use_case.execute(_make_image_with_black_cells(), config)

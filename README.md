@@ -8,6 +8,7 @@ Convert images to animated sketch videos with a realistic drawing hand effect. T
 - ✋ Realistic drawing hand animation
 - 🎯 Customizable drawing speed and parameters
 - 🧩 Object masking to control the drawing order of regions
+- 📁 Batch mode to turn a whole folder of images into videos
 - 📐 Automatic resolution optimization
 - 💻 Modern CLI with rich output using Click and Rich
 - 🏗️ Clean Architecture with SOLID principles
@@ -96,7 +97,34 @@ uv run img2sketch generate input.jpg \
     --split-len 15 \
     --frame-rate 30 \
     --object-skip-rate 10
+
+# Generate a video for every image in a folder
+uv run img2sketch generate ./my_images
 ```
+
+### Folder (Batch) Mode
+
+Pass a folder instead of an image file and one video is generated for every
+image found directly inside it. Each video is written next to its source image,
+named after it (`photo.jpg` → `photo.mp4`):
+
+```bash
+# Every image in ./my_images -> ./my_images/<name>.mp4
+uv run img2sketch generate ./my_images
+
+# Or send every video to a single folder instead
+uv run img2sketch generate ./my_images --output ./videos
+```
+
+Batch mode:
+
+- Scans the **top level only** (subfolders are ignored).
+- Recognises `.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`, `.tif`, `.tiff`.
+- **Overwrites** an existing `<name>.mp4`.
+- Keeps going if one image fails, prints a summary, and exits non-zero if any
+  image failed.
+- If `--object-masks` is given, the same mask document is applied to every
+  image (masks are scaled to each image's size).
 
 ### Get Image Information
 
@@ -111,10 +139,14 @@ uv run img2sketch info input.jpg --split-len 20
 ### CLI Options
 
 ```bash
-img2sketch generate [OPTIONS] IMAGE
+img2sketch generate [OPTIONS] SOURCE
+
+Arguments:
+  SOURCE                        An image file, or a folder of images
 
 Options:
-  -o, --output PATH              Output directory (default: ./save_videos)
+  -o, --output PATH              Output directory (file: default ./save_videos,
+                                 folder: next to each image)
   --split-len INTEGER           Grid split length [5-100] (default: 10)
   --frame-rate INTEGER          Video frame rate [1-120] (default: 25)
   --object-skip-rate INTEGER    Object drawing skip rate [1-100] (default: 8)
@@ -196,8 +228,10 @@ ai-img2sketch/
 │   │   │   ├── image_loader.py
 │   │   │   ├── hand_loader.py
 │   │   │   ├── image_preprocessor.py
+│   │   │   ├── image_scanner.py
 │   │   │   ├── object_mask_loader.py
 │   │   │   ├── output_path_generator.py
+│   │   │   ├── sketch_video_generator.py
 │   │   │   └── video_writer.py
 │   │   ├── services/             # Pure, stateless business logic
 │   │   │   ├── dimension_adjuster.py
@@ -205,11 +239,13 @@ ai-img2sketch/
 │   │   │   ├── drawing_planner.py
 │   │   │   └── hand_overlay.py
 │   │   └── use_cases/
-│   │       └── generate_sketch_video.py  # Main use case
+│   │       ├── generate_sketch_video.py   # Single image
+│   │       └── generate_batch_videos.py   # Whole folder
 │   ├── infrastructure/            # Adapters implementing the ports
 │   │   ├── image_processing/
 │   │   │   ├── image_loader.py   # OpenCVImageLoader
 │   │   │   ├── hand_loader.py    # OpenCVHandLoader
+│   │   │   ├── image_scanner.py  # FileSystemImageScanner
 │   │   │   ├── object_mask_loader.py  # JsonObjectMaskLoader
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/

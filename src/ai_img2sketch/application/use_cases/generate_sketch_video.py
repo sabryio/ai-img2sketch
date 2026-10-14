@@ -39,19 +39,17 @@ class GenerateSketchVideoUseCase:
         *,
         hand_image_path: Path,
         hand_mask_path: Path,
-        output_directory: Path,
         hand_loader: HandLoader,
         preprocessor: ImagePreprocessor,
         object_mask_loader: ObjectMaskLoader,
         video_writer_factory: VideoWriterFactory,
         output_path_generator: OutputPathGenerator,
-        object_mask_path: Path | None = None,
+        output_directory: Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._hand_image_path = hand_image_path
         self._hand_mask_path = hand_mask_path
         self._output_directory = output_directory
-        self._object_mask_path = object_mask_path
         self._hand_loader = hand_loader
         self._preprocessor = preprocessor
         self._object_mask_loader = object_mask_loader
@@ -66,12 +64,22 @@ class GenerateSketchVideoUseCase:
         self._hand_overlay = HandOverlayService()
         self._drawing_planner = DrawingPlanner()
 
-    def execute(self, image: Image, config: VideoConfig) -> Path:
+    def execute(
+        self,
+        image: Image,
+        config: VideoConfig,
+        *,
+        output_path: Path | None = None,
+        object_mask_path: Path | None = None,
+    ) -> Path:
         """Generate a sketch video for the given image and configuration.
 
         Args:
             image: The source image to turn into a sketch video.
             config: Video generation configuration.
+            output_path: Explicit destination for the video. When omitted, a path
+                is generated inside ``output_directory``.
+            object_mask_path: Optional object-mask document for this image.
 
         Returns:
             The path of the generated video file.
@@ -95,10 +103,15 @@ class GenerateSketchVideoUseCase:
             hand.dimensions.height,
         )
 
-        object_masks = self._load_object_masks(image.dimensions, target_dimensions)
+        object_masks = self._load_object_masks(
+            object_mask_path, image.dimensions, target_dimensions
+        )
         preprocessed = self._preprocessor.preprocess(image, target_dimensions)
 
-        output_path = self._output_path_generator.generate(self._output_directory)
+        if output_path is None:
+            if self._output_directory is None:
+                raise ValueError("Either output_path or output_directory must be provided")
+            output_path = self._output_path_generator.generate(self._output_directory)
         video = Video(output_path=output_path, dimensions=target_dimensions, config=config)
 
         writer = self._video_writer_factory(video)
@@ -114,13 +127,16 @@ class GenerateSketchVideoUseCase:
         return output_path
 
     def _load_object_masks(
-        self, source_dimensions: Dimensions, target_dimensions: Dimensions
+        self,
+        object_mask_path: Path | None,
+        source_dimensions: Dimensions,
+        target_dimensions: Dimensions,
     ) -> list[ObjectMask]:
         """Load object masks (if configured), scaled to the target dimensions."""
-        if self._object_mask_path is None:
+        if object_mask_path is None:
             return []
         masks = self._object_mask_loader.load(
-            self._object_mask_path, source_dimensions, target_dimensions
+            object_mask_path, source_dimensions, target_dimensions
         )
         names = ", ".join(mask.name for mask in masks)
         self._logger.info("Loaded %d object mask(s): %s", len(masks), names)

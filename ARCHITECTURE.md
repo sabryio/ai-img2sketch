@@ -57,7 +57,9 @@ on abstractions it defines itself.
 - **ImageLoader**: load a source image
 - **HandLoader**: load the drawing hand + mask
 - **ImagePreprocessor**: resize/threshold an image
+- **ImageDirectoryScanner**: list the images in a folder
 - **ObjectMaskLoader**: load ordered object masks
+- **SketchVideoGenerator**: generate one sketch video (implemented by the single-image use case)
 - **VideoWriter** / **VideoWriterFactory**: write frames
 - **OutputPathGenerator**: choose an output path
 
@@ -78,6 +80,11 @@ injected) and are trivially unit-testable.
 - **GenerateSketchVideoUseCase**: loads the hand, preprocesses the image,
   draws cell by cell, writes frames and returns the output path. All I/O
   boundaries arrive via constructor injection.
+- **GenerateVideosFromDirectoryUseCase**: finds every image in a folder and
+  runs the single-image generator on each, writing `<name>.mp4` next to the
+  source. It depends on the `SketchVideoGenerator` port (not the concrete use
+  case), so it is tested with a lightweight fake. One failing image is recorded
+  and does not stop the batch.
 
 ### 3. Infrastructure Layer (`src/ai_img2sketch/infrastructure/`)
 
@@ -87,6 +94,7 @@ or the filesystem lives here.
 - **OpenCVImageLoader** implements `ImageLoader`
 - **OpenCVHandLoader** implements `HandLoader`
 - **OpenCVImagePreprocessor** implements `ImagePreprocessor`
+- **FileSystemImageScanner** implements `ImageDirectoryScanner`
 - **JsonObjectMaskLoader** implements `ObjectMaskLoader`
 - **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
   implements `VideoWriterFactory`
@@ -140,12 +148,16 @@ detail (OpenCV) depends on those ports. The dependency arrow is inverted.
 ```
 CLI (composition root)
     ↓ builds adapters + use case
-GenerateSketchVideoUseCase
+GenerateSketchVideoUseCase  (single image)
     ↓ uses ports (ImageLoader, HandLoader, ImagePreprocessor, ObjectMaskLoader, VideoWriter, OutputPathGenerator)
     ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, DrawingPlanner, HandOverlayService)
 Domain entities + value objects
     ↓ (adapters translate to/from OpenCV + disk)
 Video output
+
+GenerateVideosFromDirectoryUseCase  (folder)
+    ↓ uses ImageDirectoryScanner + ImageLoader
+    ↓ delegates each image to the single generator via the SketchVideoGenerator port
 ```
 
 ## Type Safety
@@ -180,6 +192,6 @@ Ideas that fit the current architecture:
 
 1. **Multiple hand styles**: an alternate `HandOverlayService` implementation
 2. **Extra output formats**: a second `VideoWriter` adapter
-3. **Batch processing**: a new use case composing the existing one
-4. **Web API**: a FastAPI presentation layer reusing the same use case
+3. **Recursive batch scanning**: a `recursive` option on the scanner adapter
+4. **Web API**: a FastAPI presentation layer reusing the same use cases
 5. **Progress reporting**: a `ProgressReporter` port injected into the use case
