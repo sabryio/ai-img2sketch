@@ -9,19 +9,19 @@ The outer layers (infrastructure, presentation) depend on abstractions that the
 application defines.
 
 ```
-        ┌───────────────────────────────────────────┐
+        ┌────────────────────────────────────────────┐
         │ Presentation (Click CLI + composition)     │
-        │   └── depends on ──┐                        │
+        │   └── depends on ──┐                       │
         └────────────────────┼───────────────────────┘
                              ▼
-        ┌───────────────────────────────────────────┐
+        ┌────────────────────────────────────────────┐
         │ Application (use cases, ports, services)   │
-        │   └── depends on ──┐                        │
+        │   └── depends on ──┐                       │
         └────────────────────┼───────────────────────┘
                              ▼
-        ┌───────────────────────────────────────────┐
+        ┌────────────────────────────────────────────┐
         │ Domain (entities, value objects)           │
-        └───────────────────────────────────────────┘
+        └────────────────────────────────────────────┘
 
         Infrastructure (OpenCV adapters) ── implements ──▶ Application ports
 ```
@@ -41,6 +41,7 @@ layer, and it does not perform I/O.
 #### Value Objects (immutable)
 - **Dimensions**: width/height with validation, aspect ratio and divisor helpers
 - **VideoConfig**: validated video generation settings
+- **ObjectMask**: a named region (boolean raster) with an optional per-object skip rate
 
 **Key characteristics**
 - Pure: no OpenCV, no file access, no CLI
@@ -56,6 +57,7 @@ on abstractions it defines itself.
 - **ImageLoader**: load a source image
 - **HandLoader**: load the drawing hand + mask
 - **ImagePreprocessor**: resize/threshold an image
+- **ObjectMaskLoader**: load ordered object masks
 - **VideoWriter** / **VideoWriterFactory**: write frames
 - **OutputPathGenerator**: choose an output path
 
@@ -66,6 +68,7 @@ infrastructure; infrastructure imports the ports.
 - **DimensionAdjuster**: rounds dimensions to a multiple of `split_len`
 - **GridCalculator**: splits an image into a grid
 - **DrawingPathCalculator**: nearest-neighbour drawing order
+- **DrawingPlanner**: groups grid cells into ordered, per-object drawing groups
 - **HandOverlayService**: composites the hand onto a frame
 
 These are stateless and side-effect free, so they are used directly (not
@@ -84,6 +87,7 @@ or the filesystem lives here.
 - **OpenCVImageLoader** implements `ImageLoader`
 - **OpenCVHandLoader** implements `HandLoader`
 - **OpenCVImagePreprocessor** implements `ImagePreprocessor`
+- **JsonObjectMaskLoader** implements `ObjectMaskLoader`
 - **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
   implements `VideoWriterFactory`
 - **TimestampedOutputPathGenerator** implements `OutputPathGenerator`
@@ -137,8 +141,8 @@ detail (OpenCV) depends on those ports. The dependency arrow is inverted.
 CLI (composition root)
     ↓ builds adapters + use case
 GenerateSketchVideoUseCase
-    ↓ uses ports (ImageLoader, HandLoader, ImagePreprocessor, VideoWriter, OutputPathGenerator)
-    ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, HandOverlayService)
+    ↓ uses ports (ImageLoader, HandLoader, ImagePreprocessor, ObjectMaskLoader, VideoWriter, OutputPathGenerator)
+    ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, DrawingPlanner, HandOverlayService)
 Domain entities + value objects
     ↓ (adapters translate to/from OpenCV + disk)
 Video output
@@ -174,9 +178,8 @@ Tests live in `tests/` and run with `uv run pytest` (or `task test`):
 
 Ideas that fit the current architecture:
 
-1. **Object masking**: reintroduce as an optional port + mask-aware drawing order
-2. **Multiple hand styles**: an alternate `HandOverlayService` implementation
-3. **Extra output formats**: a second `VideoWriter` adapter
-4. **Batch processing**: a new use case composing the existing one
-5. **Web API**: a FastAPI presentation layer reusing the same use case
-6. **Progress reporting**: a `ProgressReporter` port injected into the use case
+1. **Multiple hand styles**: an alternate `HandOverlayService` implementation
+2. **Extra output formats**: a second `VideoWriter` adapter
+3. **Batch processing**: a new use case composing the existing one
+4. **Web API**: a FastAPI presentation layer reusing the same use case
+5. **Progress reporting**: a `ProgressReporter` port injected into the use case

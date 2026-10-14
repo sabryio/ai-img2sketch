@@ -1,0 +1,8 @@
+{
+  "objects": [
+    {"name": "top-left", "rect": [0, 0, 512, 512], "skip_rate": 5},
+    {"name": "top-right", "rect": [512, 0, 512, 512], "skip_rate": 5},
+    {"name": "bottom-left", "rect": [0, 512, 512, 512], "skip_rate": 8},
+    {"name": "bottom-right", "rect": [512, 512, 512, 512], "skip_rate": 8}
+  ]
+}

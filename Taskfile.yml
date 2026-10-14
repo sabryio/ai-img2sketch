@@ -103,6 +103,11 @@ tasks:
     cmds:
       - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 8 --object-skip-rate 5
 
+  generate:objects:
+    desc: Generate sketch video using the example object-mask file
+    cmds:
+      - uv run img2sketch generate {{.TEST_IMAGE}} --object-masks images/example-object-masks.json
+
   # Development
   dev:
     desc: Start development environment

@@ -22,6 +22,12 @@ def test_help_lists_commands() -> None:
     assert "info" in result.output
 
 
+def test_generate_help_lists_object_masks_option() -> None:
+    result = CliRunner().invoke(cli, ["generate", "--help"])
+    assert result.exit_code == 0
+    assert "--object-masks" in result.output
+
+
 def test_info_reports_dimensions(tmp_path: Path) -> None:
     image_path = tmp_path / "sample.png"
     _write_image(image_path)

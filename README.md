@@ -7,6 +7,7 @@ Convert images to animated sketch videos with a realistic drawing hand effect. T
 - 🎨 Converts static images to animated sketch videos
 - ✋ Realistic drawing hand animation
 - 🎯 Customizable drawing speed and parameters
+- 🧩 Object masking to control the drawing order of regions
 - 📐 Automatic resolution optimization
 - 💻 Modern CLI with rich output using Click and Rich
 - 🏗️ Clean Architecture with SOLID principles
@@ -120,6 +121,7 @@ Options:
   --end-duration INTEGER        Final image duration [0-10] seconds (default: 2)
   --hand-image PATH             Custom hand image path
   --hand-mask PATH              Custom hand mask path
+  --object-masks PATH           JSON file describing ordered object masks
   --help                        Show this message and exit
 ```
 
@@ -129,6 +131,49 @@ Options:
 - **frame-rate**: Standard video frame rate (25-30 recommended)
 - **object-skip-rate**: Lower values = more detailed/slower drawing
 - **end-duration**: Duration (in seconds) to display the final colored image
+- **object-masks**: JSON file (see below) that draws regions in a specified order
+
+### Object Masking
+
+By default the whole image is drawn as one region, in a nearest-neighbour path.
+With `--object-masks` you can split it into named objects and control the order
+in which they are drawn, plus a per-object drawing speed:
+
+```bash
+uv run img2sketch generate input.jpg --object-masks objects.json
+```
+
+The mask file is JSON. Objects are drawn in the order they appear:
+
+```json
+{
+  "objects": [
+    {"name": "face", "mask": "face.png", "skip_rate": 4},
+    {"name": "sign", "rect": [512, 60, 400, 180]},
+    {"name": "background", "skip_rate": 16}
+  ]
+}
+```
+
+Each entry supports:
+
+- **name** (required): a label used in logs.
+- **mask** (optional): path to a mask image, resolved relative to the JSON file.
+  Non-zero pixels belong to the object. The mask is authored at the source image
+  size and scaled automatically.
+- **rect** (optional): `[x, y, width, height]` in source-image pixels.
+- **skip_rate** (optional): draw speed for this object. Falls back to
+  `--object-skip-rate` when omitted.
+
+An entry may define **either** `mask` or `rect`, but not both. An entry with
+neither becomes the catch-all "background" object and owns every pixel not
+claimed by another mask.
+
+A ready-to-use example lives at `images/example-object-masks.json`:
+
+```bash
+task generate:objects
+```
 
 ## Project Structure
 
@@ -144,17 +189,20 @@ ai-img2sketch/
 │   │   │   └── video.py          # Video entity
 │   │   └── value_objects/        # Immutable value objects
 │   │       ├── dimensions.py     # Dimensions value object
+│   │       ├── object_mask.py    # Object mask value object
 │   │       └── video_config.py   # Video configuration
 │   ├── application/               # Application layer
 │   │   ├── ports/                # Interfaces the app depends on
 │   │   │   ├── image_loader.py
 │   │   │   ├── hand_loader.py
 │   │   │   ├── image_preprocessor.py
+│   │   │   ├── object_mask_loader.py
 │   │   │   ├── output_path_generator.py
 │   │   │   └── video_writer.py
 │   │   ├── services/             # Pure, stateless business logic
 │   │   │   ├── dimension_adjuster.py
 │   │   │   ├── drawing_calculator.py
+│   │   │   ├── drawing_planner.py
 │   │   │   └── hand_overlay.py
 │   │   └── use_cases/
 │   │       └── generate_sketch_video.py  # Main use case
@@ -162,6 +210,7 @@ ai-img2sketch/
 │   │   ├── image_processing/
 │   │   │   ├── image_loader.py   # OpenCVImageLoader
 │   │   │   ├── hand_loader.py    # OpenCVHandLoader
+│   │   │   ├── object_mask_loader.py  # JsonObjectMaskLoader
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
 │   │       ├── video_writer.py           # OpenCVVideoWriter
@@ -173,9 +222,10 @@ ai-img2sketch/
 ├── main.py                       # Entry point
 ├── pyproject.toml               # Project configuration
 ├── uv.lock                      # Locked dependencies
-├── images/                      # Hand images and masks
+├── images/                      # Hand images, masks and mask examples
 │   ├── drawing-hand.png
-│   └── hand-mask.png
+│   ├── hand-mask.png
+│   └── example-object-masks.json
 └── save_videos/                # Output directory
 ```
 

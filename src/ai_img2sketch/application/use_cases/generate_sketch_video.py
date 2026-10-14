@@ -7,17 +7,22 @@ import time
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 
 from ...domain.entities.hand import Hand
 from ...domain.entities.image import Image
 from ...domain.entities.video import Video
+from ...domain.value_objects.dimensions import Dimensions
+from ...domain.value_objects.object_mask import ObjectMask
 from ...domain.value_objects.video_config import VideoConfig
 from ..ports.hand_loader import HandLoader
 from ..ports.image_preprocessor import ImagePreprocessor, PreprocessedImage
+from ..ports.object_mask_loader import ObjectMaskLoader
 from ..ports.output_path_generator import OutputPathGenerator
 from ..ports.video_writer import VideoWriter, VideoWriterFactory
 from ..services.dimension_adjuster import DimensionAdjuster
 from ..services.drawing_calculator import DrawingPathCalculator, GridCalculator
+from ..services.drawing_planner import DrawingGroup, DrawingPlanner
 from ..services.hand_overlay import HandOverlayService
 
 
@@ -37,15 +42,19 @@ class GenerateSketchVideoUseCase:
         output_directory: Path,
         hand_loader: HandLoader,
         preprocessor: ImagePreprocessor,
+        object_mask_loader: ObjectMaskLoader,
         video_writer_factory: VideoWriterFactory,
         output_path_generator: OutputPathGenerator,
+        object_mask_path: Path | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         self._hand_image_path = hand_image_path
         self._hand_mask_path = hand_mask_path
         self._output_directory = output_directory
+        self._object_mask_path = object_mask_path
         self._hand_loader = hand_loader
         self._preprocessor = preprocessor
+        self._object_mask_loader = object_mask_loader
         self._video_writer_factory = video_writer_factory
         self._output_path_generator = output_path_generator
         self._logger = logger if logger is not None else logging.getLogger(__name__)
@@ -55,6 +64,7 @@ class GenerateSketchVideoUseCase:
         self._grid_calculator = GridCalculator()
         self._path_calculator = DrawingPathCalculator()
         self._hand_overlay = HandOverlayService()
+        self._drawing_planner = DrawingPlanner()
 
     def execute(self, image: Image, config: VideoConfig) -> Path:
         """Generate a sketch video for the given image and configuration.
@@ -85,6 +95,7 @@ class GenerateSketchVideoUseCase:
             hand.dimensions.height,
         )
 
+        object_masks = self._load_object_masks(image.dimensions, target_dimensions)
         preprocessed = self._preprocessor.preprocess(image, target_dimensions)
 
         output_path = self._output_path_generator.generate(self._output_directory)
@@ -92,7 +103,7 @@ class GenerateSketchVideoUseCase:
 
         writer = self._video_writer_factory(video)
         try:
-            self._draw_entire_image(writer, preprocessed, hand, config)
+            self._draw_entire_image(writer, preprocessed, hand, config, object_masks)
             self._add_final_frames(writer, preprocessed, config)
         finally:
             writer.release()
@@ -102,14 +113,28 @@ class GenerateSketchVideoUseCase:
         self._logger.info("Video saved to: %s", output_path)
         return output_path
 
+    def _load_object_masks(
+        self, source_dimensions: Dimensions, target_dimensions: Dimensions
+    ) -> list[ObjectMask]:
+        """Load object masks (if configured), scaled to the target dimensions."""
+        if self._object_mask_path is None:
+            return []
+        masks = self._object_mask_loader.load(
+            self._object_mask_path, source_dimensions, target_dimensions
+        )
+        names = ", ".join(mask.name for mask in masks)
+        self._logger.info("Loaded %d object mask(s): %s", len(masks), names)
+        return masks
+
     def _draw_entire_image(
         self,
         writer: VideoWriter,
         preprocessed: PreprocessedImage,
         hand: Hand,
         config: VideoConfig,
+        object_masks: list[ObjectMask],
     ) -> None:
-        """Draw the entire image progressively, cell by cell."""
+        """Draw the image progressively, group by group (object by object)."""
         self._logger.info("Drawing entire image...")
 
         drawn_frame = np.full(preprocessed.original.shape, 255, dtype=np.uint8)
@@ -120,50 +145,94 @@ class GenerateSketchVideoUseCase:
         grid = self._grid_calculator.split_into_grid(
             preprocessed.thresholded, n_vertical, n_horizontal
         )
-        black_indices = self._grid_calculator.find_grids_with_black_pixels(
+        black_cells = self._grid_calculator.find_grids_with_black_pixels(
             grid, config.black_pixel_threshold
         )
 
-        if len(black_indices) == 0:
+        if len(black_cells) == 0:
             self._logger.warning("No black pixels found to draw")
             return
 
-        self._logger.info("Found %d grid cells to draw", len(black_indices))
+        self._logger.info("Found %d grid cells to draw", len(black_cells))
 
+        groups = self._drawing_planner.plan(
+            black_cells,
+            object_masks,
+            preprocessed.dimensions,
+            config.split_len,
+            config.object_skip_rate,
+        )
+
+        for group in groups:
+            if len(group.cells) == 0:
+                continue
+            self._logger.info(
+                "Drawing %s: %d cells (skip rate %d)",
+                group.label,
+                len(group.cells),
+                group.skip_rate,
+            )
+            self._draw_group(
+                writer, drawn_frame, hand, preprocessed.dimensions, grid, group, config.split_len
+            )
+
+    def _draw_group(
+        self,
+        writer: VideoWriter,
+        drawn_frame: npt.NDArray[np.uint8],
+        hand: Hand,
+        dimensions: Dimensions,
+        grid: npt.NDArray,
+        group: DrawingGroup,
+        split_len: int,
+    ) -> None:
+        """Draw every cell of one group following a nearest-neighbour path."""
+        cells = group.cells.copy()
         selected_idx = 0
         frame_counter = 0
-        while len(black_indices) > 0:
-            current_cell = black_indices[selected_idx].copy()
 
-            v_start = int(current_cell[0]) * config.split_len
-            v_end = v_start + config.split_len
-            h_start = int(current_cell[1]) * config.split_len
-            h_end = h_start + config.split_len
+        while len(cells) > 0:
+            current_cell = cells[selected_idx].copy()
 
-            grid_section = grid[current_cell[0]][current_cell[1]]
-            for channel in range(3):
-                drawn_frame[v_start:v_end, h_start:h_end, channel] = grid_section
+            self._render_cell(drawn_frame, grid, current_cell, split_len)
 
-            hand_x, hand_y = self._hand_overlay.calculate_hand_position(
-                h_start, v_start, config.split_len
-            )
+            v_start = int(current_cell[0]) * split_len
+            h_start = int(current_cell[1]) * split_len
+            hand_x, hand_y = self._hand_overlay.calculate_hand_position(h_start, v_start, split_len)
             frame_with_hand = self._hand_overlay.overlay_hand(
-                drawn_frame.copy(), hand, hand_x, hand_y, preprocessed.dimensions
+                drawn_frame.copy(), hand, hand_x, hand_y, dimensions
             )
 
             # Remove the current cell by swapping it with the last one.
-            black_indices[selected_idx] = black_indices[-1]
-            black_indices = black_indices[:-1]
+            cells[selected_idx] = cells[-1]
+            cells = cells[:-1]
 
             frame_counter += 1
-            if frame_counter % config.object_skip_rate == 0:
+            if frame_counter % group.skip_rate == 0:
                 writer.write_frame(frame_with_hand)
 
             if frame_counter % 40 == 0:
-                self._logger.info("Progress: %d cells remaining", len(black_indices))
+                self._logger.info("Progress (%s): %d cells remaining", group.label, len(cells))
 
-            if len(black_indices) > 0:
-                selected_idx = self._path_calculator.find_nearest_index(black_indices, current_cell)
+            if len(cells) > 0:
+                selected_idx = self._path_calculator.find_nearest_index(cells, current_cell)
+
+    @staticmethod
+    def _render_cell(
+        drawn_frame: npt.NDArray[np.uint8],
+        grid: npt.NDArray,
+        cell: npt.NDArray[np.int_],
+        split_len: int,
+    ) -> None:
+        """Copy one grid cell of the thresholded image into the drawn frame."""
+        v_start = int(cell[0]) * split_len
+        v_end = v_start + split_len
+        h_start = int(cell[1]) * split_len
+        h_end = h_start + split_len
+
+        grid_section = grid[cell[0]][cell[1]]
+        for channel in range(3):
+            drawn_frame[v_start:v_end, h_start:h_end, channel] = grid_section
 
     def _add_final_frames(
         self,

@@ -67,6 +67,12 @@ def cli() -> None:
     default=None,
     help="Custom hand mask path",
 )
+@click.option(
+    "--object-masks",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="JSON file describing ordered object masks (see README)",
+)
 def generate(
     image: Path,
     output: Path | None,
@@ -76,6 +82,7 @@ def generate(
     end_duration: int,
     hand_image: Path | None,
     hand_mask: Path | None,
+    object_masks: Path | None,
 ) -> None:
     """Generate a sketch video from an image.
 
@@ -114,6 +121,8 @@ def generate(
         console.print(
             f"  Dimensions: [cyan]{source_image.dimensions.width}x{source_image.dimensions.height}[/cyan]"
         )
+        if object_masks is not None:
+            console.print(f"  Object masks: [cyan]{object_masks.name}[/cyan]")
 
         config = VideoConfig(
             frame_rate=frame_rate,
@@ -130,6 +139,7 @@ def generate(
             hand_image_path=hand_image,
             hand_mask_path=hand_mask,
             output_directory=output,
+            object_mask_path=object_masks,
         )
         output_path = use_case.execute(source_image, config)
 
