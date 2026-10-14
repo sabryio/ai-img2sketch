@@ -1,5 +1,8 @@
-"""Use case for generating sketch video from image."""
+"""Use case: generate a sketch video from an image."""
 
+from __future__ import annotations
+
+import logging
 import time
 from pathlib import Path
 
@@ -9,214 +12,167 @@ from ...domain.entities.hand import Hand
 from ...domain.entities.image import Image
 from ...domain.entities.video import Video
 from ...domain.value_objects.video_config import VideoConfig
-from ...infrastructure.image_processing.dimension_adjuster import DimensionAdjuster
-from ...infrastructure.image_processing.drawing_calculator import (
-    DrawingPathCalculator,
-    GridCalculator,
-)
-from ...infrastructure.image_processing.hand_overlay import HandOverlayService
-from ...infrastructure.image_processing.preprocessor import OpenCVImagePreprocessor
-from ...infrastructure.video.video_writer import OpenCVVideoWriter
+from ..ports.hand_loader import HandLoader
+from ..ports.image_preprocessor import ImagePreprocessor, PreprocessedImage
+from ..ports.output_path_generator import OutputPathGenerator
+from ..ports.video_writer import VideoWriter, VideoWriterFactory
+from ..services.dimension_adjuster import DimensionAdjuster
+from ..services.drawing_calculator import DrawingPathCalculator, GridCalculator
+from ..services.hand_overlay import HandOverlayService
 
 
 class GenerateSketchVideoUseCase:
-    """Use case: Generate animated sketch video from an image."""
+    """Generate an animated sketch video from an image.
+
+    The use case depends only on application ports (abstractions) and pure
+    application services. Concrete infrastructure is injected by the
+    composition root, so the use case can be unit-tested with fakes.
+    """
 
     def __init__(
         self,
+        *,
         hand_image_path: Path,
         hand_mask_path: Path,
         output_directory: Path,
-    ):
-        """Initialize use case with dependencies."""
-        self.hand_image_path = hand_image_path
-        self.hand_mask_path = hand_mask_path
-        self.output_directory = output_directory
-        self.preprocessor = OpenCVImagePreprocessor()
-        self.hand_overlay_service = HandOverlayService()
-        self.dimension_adjuster = DimensionAdjuster()
-        self.grid_calculator = GridCalculator()
-        self.path_calculator = DrawingPathCalculator()
+        hand_loader: HandLoader,
+        preprocessor: ImagePreprocessor,
+        video_writer_factory: VideoWriterFactory,
+        output_path_generator: OutputPathGenerator,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self._hand_image_path = hand_image_path
+        self._hand_mask_path = hand_mask_path
+        self._output_directory = output_directory
+        self._hand_loader = hand_loader
+        self._preprocessor = preprocessor
+        self._video_writer_factory = video_writer_factory
+        self._output_path_generator = output_path_generator
+        self._logger = logger if logger is not None else logging.getLogger(__name__)
 
-    def execute(
-        self,
-        image: Image,
-        config: VideoConfig,
-        mask_path: Path | None = None,
-    ) -> Path:
-        """Execute the use case to generate sketch video."""
-        start_time = time.time()
-        print("Starting sketch video generation...")
+        # Pure, side-effect-free services are safe to instantiate directly.
+        self._dimension_adjuster = DimensionAdjuster()
+        self._grid_calculator = GridCalculator()
+        self._path_calculator = DrawingPathCalculator()
+        self._hand_overlay = HandOverlayService()
 
-        # Adjust dimensions if needed
-        target_dimensions = self.dimension_adjuster.adjust_to_standard(
+    def execute(self, image: Image, config: VideoConfig) -> Path:
+        """Generate a sketch video for the given image and configuration.
+
+        Args:
+            image: The source image to turn into a sketch video.
+            config: Video generation configuration.
+
+        Returns:
+            The path of the generated video file.
+        """
+        start_time = time.perf_counter()
+        self._logger.info("Starting sketch video generation...")
+
+        target_dimensions = self._dimension_adjuster.adjust_to_multiple(
             image.dimensions, config.split_len
         )
-        print(f"Target dimensions: {target_dimensions.width}x{target_dimensions.height}")
-
-        # Load hand
-        hand = Hand.load(self.hand_image_path, self.hand_mask_path)
-        print(f"Loaded hand: {hand.dimensions.width}x{hand.dimensions.height}")
-
-        # Preprocess image
-        preprocessed = self.preprocessor.preprocess(image, target_dimensions)
-
-        # Create video entity
-        output_path = self._generate_output_path()
-        video = Video(
-            output_path=output_path,
-            dimensions=target_dimensions,
-            config=config,
+        self._logger.info(
+            "Target dimensions: %dx%d",
+            target_dimensions.width,
+            target_dimensions.height,
         )
 
-        # Generate video
-        with OpenCVVideoWriter(video) as writer:
-            self._draw_sketch_animation(
-                writer=writer,
-                preprocessed=preprocessed,
-                hand=hand,
-                config=config,
-                mask_path=mask_path,
-            )
+        hand = self._hand_loader.load(self._hand_image_path, self._hand_mask_path)
+        self._logger.info(
+            "Loaded hand: %dx%d",
+            hand.dimensions.width,
+            hand.dimensions.height,
+        )
 
-            # Add final colored frames
-            self._add_final_frames(writer, preprocessed, config)
+        preprocessed = self._preprocessor.preprocess(image, target_dimensions)
 
-        elapsed = time.time() - start_time
-        print(f"Video generation completed in {elapsed:.2f} seconds")
-        print(f"Video saved to: {output_path}")
+        output_path = self._output_path_generator.generate(self._output_directory)
+        video = Video(output_path=output_path, dimensions=target_dimensions, config=config)
 
-        return output_path
-
-    def _draw_sketch_animation(
-        self,
-        writer: OpenCVVideoWriter,
-        preprocessed,
-        hand: Hand,
-        config: VideoConfig,
-        mask_path: Path | None,
-    ) -> None:
-        """Draw the sketch animation."""
-        if mask_path is not None:
-            self._draw_with_object_masks(writer, preprocessed, hand, config, mask_path)
-        else:
+        writer = self._video_writer_factory(video)
+        try:
             self._draw_entire_image(writer, preprocessed, hand, config)
+            self._add_final_frames(writer, preprocessed, config)
+        finally:
+            writer.release()
+
+        elapsed = time.perf_counter() - start_time
+        self._logger.info("Video generation completed in %.2f seconds", elapsed)
+        self._logger.info("Video saved to: %s", output_path)
+        return output_path
 
     def _draw_entire_image(
         self,
-        writer: OpenCVVideoWriter,
-        preprocessed,
+        writer: VideoWriter,
+        preprocessed: PreprocessedImage,
         hand: Hand,
         config: VideoConfig,
     ) -> None:
-        """Draw the entire image without object masking."""
-        print("Drawing entire image...")
+        """Draw the entire image progressively, cell by cell."""
+        self._logger.info("Drawing entire image...")
 
-        # Initialize blank canvas
         drawn_frame = np.full(preprocessed.original.shape, 255, dtype=np.uint8)
 
-        # Calculate grid
-        n_vertical, n_horizontal = self.grid_calculator.calculate_grid_dimensions(
+        n_vertical, n_horizontal = self._grid_calculator.calculate_grid_dimensions(
             preprocessed.dimensions, config.split_len
         )
-
-        # Split into grid
-        grid = self.grid_calculator.split_into_grid(
+        grid = self._grid_calculator.split_into_grid(
             preprocessed.thresholded, n_vertical, n_horizontal
         )
-
-        # Find grids with black pixels
-        black_indices = self.grid_calculator.find_grids_with_black_pixels(
+        black_indices = self._grid_calculator.find_grids_with_black_pixels(
             grid, config.black_pixel_threshold
         )
 
         if len(black_indices) == 0:
-            print("No black pixels found to draw")
+            self._logger.warning("No black pixels found to draw")
             return
 
-        print(f"Found {len(black_indices)} grid cells to draw")
+        self._logger.info("Found %d grid cells to draw", len(black_indices))
 
-        # Start drawing
         selected_idx = 0
         frame_counter = 0
-
-        while len(black_indices) > 1:
+        while len(black_indices) > 0:
             current_cell = black_indices[selected_idx].copy()
 
-            # Calculate grid position
-            v_start = current_cell[0] * config.split_len
+            v_start = int(current_cell[0]) * config.split_len
             v_end = v_start + config.split_len
-            h_start = current_cell[1] * config.split_len
+            h_start = int(current_cell[1]) * config.split_len
             h_end = h_start + config.split_len
 
-            # Copy grid cell to drawn frame (all 3 channels)
             grid_section = grid[current_cell[0]][current_cell[1]]
             for channel in range(3):
                 drawn_frame[v_start:v_end, h_start:h_end, channel] = grid_section
 
-            # Overlay hand
-            hand_x, hand_y = self.hand_overlay_service.calculate_hand_position(
+            hand_x, hand_y = self._hand_overlay.calculate_hand_position(
                 h_start, v_start, config.split_len
             )
-            frame_with_hand = self.hand_overlay_service.overlay_hand(
+            frame_with_hand = self._hand_overlay.overlay_hand(
                 drawn_frame.copy(), hand, hand_x, hand_y, preprocessed.dimensions
             )
 
-            # Remove current cell from list
+            # Remove the current cell by swapping it with the last one.
             black_indices[selected_idx] = black_indices[-1]
             black_indices = black_indices[:-1]
 
-            # Find nearest next cell
-            distances = self.path_calculator.calculate_euclidean_distance(
-                black_indices, current_cell
-            )
-            selected_idx = int(np.argmin(distances))
-
-            # Write frame based on skip rate
             frame_counter += 1
             if frame_counter % config.object_skip_rate == 0:
                 writer.write_frame(frame_with_hand)
 
             if frame_counter % 40 == 0:
-                print(f"Progress: {len(black_indices)} cells remaining")
+                self._logger.info("Progress: %d cells remaining", len(black_indices))
 
-        # Final frame: show original image
-        drawn_frame[:, :, :] = preprocessed.original
-
-    def _draw_with_object_masks(
-        self,
-        writer: OpenCVVideoWriter,
-        preprocessed,
-        hand: Hand,
-        config: VideoConfig,
-        _mask_path: Path,
-    ) -> None:
-        """Draw with object masks (future implementation)."""
-        # For now, fall back to drawing entire image
-        print("Object mask drawing not yet implemented, drawing entire image")
-        self._draw_entire_image(writer, preprocessed, hand, config)
+            if len(black_indices) > 0:
+                selected_idx = self._path_calculator.find_nearest_index(black_indices, current_cell)
 
     def _add_final_frames(
         self,
-        writer: OpenCVVideoWriter,
-        preprocessed,
+        writer: VideoWriter,
+        preprocessed: PreprocessedImage,
         config: VideoConfig,
     ) -> None:
-        """Add final colored image frames."""
+        """Add final frames showing the original image."""
         num_frames = config.frame_rate * config.end_duration_sec
-        print(f"Adding {num_frames} final frames...")
-
+        self._logger.info("Adding %d final frames...", num_frames)
         for _ in range(num_frames):
             writer.write_frame(preprocessed.original)
-
-    def _generate_output_path(self) -> Path:
-        """Generate unique output video path."""
-        from datetime import datetime
-
-        timestamp = datetime.now().strftime("%H%M%S")
-        filename = f"vid-{timestamp}.mp4"
-
-        # Ensure output directory exists
-        self.output_directory.mkdir(parents=True, exist_ok=True)
-
-        return self.output_directory / filename

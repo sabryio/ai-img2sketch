@@ -3,6 +3,7 @@ version: "3"
 vars:
   PYTHON_VERSION: "3.10"
   SRC_DIR: src
+  TESTS_DIR: tests
   TEST_IMAGE: images/cartoon.png
 
 tasks:
@@ -37,22 +38,22 @@ tasks:
   lint:
     desc: Run ruff linter
     cmds:
-      - uv run ruff check {{.SRC_DIR}}/
+      - uv run ruff check {{.SRC_DIR}}/ {{.TESTS_DIR}}/
 
   lint:fix:
     desc: Run ruff linter and auto-fix issues
     cmds:
-      - uv run ruff check --fix {{.SRC_DIR}}/
+      - uv run ruff check --fix {{.SRC_DIR}}/ {{.TESTS_DIR}}/
 
   format:
     desc: Format code with ruff
     cmds:
-      - uv run ruff format {{.SRC_DIR}}/
+      - uv run ruff format {{.SRC_DIR}}/ {{.TESTS_DIR}}/
 
   format:check:
     desc: Check code formatting without changes
     cmds:
-      - uv run ruff format --check {{.SRC_DIR}}/
+      - uv run ruff format --check {{.SRC_DIR}}/ {{.TESTS_DIR}}/
 
   typecheck:
     desc: Run ty type checker
@@ -63,11 +64,12 @@ tasks:
         platforms: [linux, darwin]
 
   check:
-    desc: Run all code quality checks (lint, format, typecheck)
+    desc: Run all code quality checks (lint, format, typecheck, tests)
     cmds:
       - task: lint
       - task: format:check
       - task: typecheck
+      - task: test
 
   fix:
     desc: Auto-fix all fixable issues
@@ -94,12 +96,12 @@ tasks:
   generate:fast:
     desc: Generate sketch video with fast settings
     cmds:
-      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 15 --object-skip-rate 12 --bg-skip-rate 20
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 15 --object-skip-rate 12
 
   generate:detailed:
     desc: Generate sketch video with detailed settings
     cmds:
-      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 8 --object-skip-rate 5 --bg-skip-rate 10
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 8 --object-skip-rate 5
 
   # Development
   dev:
@@ -113,16 +115,16 @@ tasks:
     cmds:
       - cmd: |
           while ($true) {
-            uv run ruff check {{.SRC_DIR}}/
+            uv run ruff check {{.SRC_DIR}}/ {{.TESTS_DIR}}/
             Start-Sleep -Seconds 2
           }
         platforms: [windows]
 
   # Testing
   test:
-    desc: Run tests (placeholder - add your test framework)
+    desc: Run the test suite with pytest
     cmds:
-      - echo "No tests configured yet. Add pytest or unittest"
+      - uv run pytest
 
   # Build and Distribution
   build:
@@ -195,11 +197,12 @@ tasks:
 
   # Workflows
   ci:
-    desc: Run CI checks (lint, format check, type check)
+    desc: Run CI checks (lint, format check, type check, tests)
     cmds:
       - task: lint
       - task: format:check
       - task: typecheck
+      - task: test
       - echo "✓ All CI checks passed!"
 
   pre-commit:
@@ -207,6 +210,7 @@ tasks:
     cmds:
       - task: fix
       - task: typecheck
+      - task: test
 
   release:
     desc: Prepare for release
@@ -227,7 +231,7 @@ tasks:
   example:custom:
     desc: Run example with custom settings
     cmds:
-      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 12 --frame-rate 30 --object-skip-rate 8 --bg-skip-rate 14 --end-duration 3
+      - uv run img2sketch generate {{.TEST_IMAGE}} --split-len 12 --frame-rate 30 --object-skip-rate 8 --end-duration 3
 
   # Help
   default:
@@ -249,6 +253,7 @@ tasks:
       - echo "  task lint         - Check code style"
       - echo "  task format       - Format code"
       - echo "  task typecheck    - Run type checker"
+      - echo "  task test         - Run the test suite"
       - echo "  task check        - Run all checks"
       - echo "  task fix          - Auto-fix issues"
       - echo ""

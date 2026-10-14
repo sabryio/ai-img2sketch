@@ -1,4 +1,4 @@
-"""Service for overlaying hand animation on frames."""
+"""Service for overlaying the drawing hand on frames."""
 
 import numpy as np
 import numpy.typing as npt
@@ -8,7 +8,7 @@ from ...domain.value_objects.dimensions import Dimensions
 
 
 class HandOverlayService:
-    """Service to overlay hand image on drawing frames."""
+    """Overlays the drawing-hand image on drawing frames."""
 
     @staticmethod
     def overlay_hand(
@@ -18,7 +18,7 @@ class HandOverlayService:
         hand_y: int,
         frame_dimensions: Dimensions,
     ) -> npt.NDArray[np.uint8]:
-        """Overlay hand image on frame at specified coordinates."""
+        """Overlay the hand image on a frame at the specified coordinates."""
         # Calculate remaining space
         remaining_height = frame_dimensions.height - hand_y
         remaining_width = frame_dimensions.width - hand_x
@@ -48,7 +48,7 @@ class HandOverlayService:
 
     @staticmethod
     def calculate_hand_position(drawing_x: int, drawing_y: int, split_len: int) -> tuple[int, int]:
-        """Calculate hand position centered on drawing coordinates."""
+        """Calculate the hand position centered on the drawing coordinates."""
         hand_x = drawing_x + split_len // 2
         hand_y = drawing_y + split_len // 2
         return hand_x, hand_y

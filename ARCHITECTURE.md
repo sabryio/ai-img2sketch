@@ -2,183 +2,181 @@
 
 ## Overview
 
-This project implements a **Clean Architecture** pattern with clear separation between domain logic, application use cases, infrastructure, and presentation layers. The design follows **SOLID principles** throughout.
+This project follows a **Clean Architecture** (Ports & Adapters / Hexagonal)
+style. Dependencies point **inward**: the domain knows nothing about the
+application, and the application knows nothing about infrastructure or the CLI.
+The outer layers (infrastructure, presentation) depend on abstractions that the
+application defines.
+
+```
+        ┌───────────────────────────────────────────┐
+        │ Presentation (Click CLI + composition)     │
+        │   └── depends on ──┐                        │
+        └────────────────────┼───────────────────────┘
+                             ▼
+        ┌───────────────────────────────────────────┐
+        │ Application (use cases, ports, services)   │
+        │   └── depends on ──┐                        │
+        └────────────────────┼───────────────────────┘
+                             ▼
+        ┌───────────────────────────────────────────┐
+        │ Domain (entities, value objects)           │
+        └───────────────────────────────────────────┘
+
+        Infrastructure (OpenCV adapters) ── implements ──▶ Application ports
+```
 
 ## Architecture Layers
 
 ### 1. Domain Layer (`src/ai_img2sketch/domain/`)
 
-The innermost layer containing business entities and value objects. This layer has no dependencies on outer layers.
+The innermost layer: the business model. It has no dependency on any other
+layer, and it does not perform I/O.
 
 #### Entities
-- **Image**: Represents an image with validation and transformation methods
-- **Hand**: Represents the drawing hand with mask data
-- **Video**: Represents the output video configuration
+- **Image**: an image's pixel data, dimensions and optional source path
+- **Hand**: the drawing-hand image, its inverse mask and dimensions
+- **Video**: the description of the video to write (path, dimensions, config)
 
-#### Value Objects (Immutable)
-- **Dimensions**: Width/height with validation and utility methods
-- **VideoConfig**: Configuration for video generation with Pydantic validation
+#### Value Objects (immutable)
+- **Dimensions**: width/height with validation, aspect ratio and divisor helpers
+- **VideoConfig**: validated video generation settings
 
-**Key Characteristics:**
-- Pure business logic
-- No external dependencies (except Pydantic for validation)
-- Immutable where appropriate (frozen models)
-- Type-safe with full type hints
+**Key characteristics**
+- Pure: no OpenCV, no file access, no CLI
+- Immutable where appropriate (`Dimensions`, `VideoConfig`, `Video` are frozen)
+- Fully type-hinted; validated with Pydantic
 
 ### 2. Application Layer (`src/ai_img2sketch/application/`)
 
-Contains use cases that orchestrate domain entities to fulfill business requirements.
+Orchestrates the domain to fulfil use cases. It depends only on the domain and
+on abstractions it defines itself.
 
-#### Use Cases
-- **GenerateSketchVideoUseCase**: Main use case for video generation
-  - Coordinates image preprocessing
-  - Manages hand loading
-  - Orchestrates drawing animation
-  - Handles video output
+#### Ports (`application/ports/`) — the boundaries
+- **ImageLoader**: load a source image
+- **HandLoader**: load the drawing hand + mask
+- **ImagePreprocessor**: resize/threshold an image
+- **VideoWriter** / **VideoWriterFactory**: write frames
+- **OutputPathGenerator**: choose an output path
 
-**Key Characteristics:**
-- Single Responsibility: Each use case does one thing
-- Dependency Inversion: Depends on abstractions (protocols)
-- No framework dependencies
+These are `typing.Protocol` definitions. The application never imports
+infrastructure; infrastructure imports the ports.
+
+#### Services (`application/services/`) — pure business logic
+- **DimensionAdjuster**: rounds dimensions to a multiple of `split_len`
+- **GridCalculator**: splits an image into a grid
+- **DrawingPathCalculator**: nearest-neighbour drawing order
+- **HandOverlayService**: composites the hand onto a frame
+
+These are stateless and side-effect free, so they are used directly (not
+injected) and are trivially unit-testable.
+
+#### Use Cases (`application/use_cases/`)
+- **GenerateSketchVideoUseCase**: loads the hand, preprocesses the image,
+  draws cell by cell, writes frames and returns the output path. All I/O
+  boundaries arrive via constructor injection.
 
 ### 3. Infrastructure Layer (`src/ai_img2sketch/infrastructure/`)
 
-Concrete implementations of services and external integrations.
+Adapters that implement the application ports. Everything that touches OpenCV
+or the filesystem lives here.
 
-#### Image Processing Services
-- **OpenCVImagePreprocessor**: Image preprocessing using OpenCV
-- **HandOverlayService**: Overlays hand on frames
-- **DrawingPathCalculator**: Calculates optimal drawing paths
-- **GridCalculator**: Handles grid splitting and calculation
-- **DimensionAdjuster**: Adjusts dimensions to standard resolutions
-
-#### Video Services
-- **OpenCVVideoWriter**: Video writing implementation using OpenCV
-
-**Key Characteristics:**
-- Interface Segregation: Small, focused protocols
-- Liskov Substitution: Implementations are interchangeable
-- Concrete implementations of domain services
+- **OpenCVImageLoader** implements `ImageLoader`
+- **OpenCVHandLoader** implements `HandLoader`
+- **OpenCVImagePreprocessor** implements `ImagePreprocessor`
+- **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
+  implements `VideoWriterFactory`
+- **TimestampedOutputPathGenerator** implements `OutputPathGenerator`
 
 ### 4. Presentation Layer (`src/ai_img2sketch/presentation/`)
 
-User interface layer - in this case, a CLI built with Click and Rich.
-
-#### CLI Interface
-- **cli.py**: Click-based command-line interface
-  - `generate`: Generate sketch video from image
-  - `info`: Display image information and recommendations
-
-**Key Characteristics:**
-- Beautiful terminal output using Rich
-- Type-safe command arguments
-- Clear error messages
-- Progress feedback
+- **cli.py**: the Click/Rich command-line interface (`generate`, `info`)
+- **composition.py**: the **composition root** — the single place that
+  constructs concrete adapters and injects them into the use case
 
 ## Design Patterns
 
-### 1. Repository Pattern
-- Abstracts data access through protocols
-- Easy to swap implementations
+### Ports & Adapters
+The application defines ports; infrastructure provides adapters. Swapping a
+technology (e.g. a different image library) means writing a new adapter, not
+touching use cases.
 
-### 2. Strategy Pattern
-- Different preprocessing strategies can be swapped
-- Video writers can be changed without affecting use cases
+### Dependency Injection
+`GenerateSketchVideoUseCase` receives every boundary as a constructor argument.
+`composition.py` wires the real ones; tests pass fakes.
 
-### 3. Dependency Injection
-- Dependencies passed through constructors
-- Makes testing easier
+### Value Object
+`Dimensions`, `VideoConfig` and `Video` are immutable and self-validating.
 
-### 4. Value Object Pattern
-- Immutable value objects (Dimensions, VideoConfig)
-- Ensures data integrity
+## SOLID Principles
 
-## SOLID Principles Application
+### Single Responsibility
+Each class has one reason to change: `HandOverlayService` only overlays the
+hand, `DrawingPathCalculator` only computes drawing order, adapters only talk
+to OpenCV.
 
-### Single Responsibility Principle (SRP)
-- Each class has one reason to change
-- `HandOverlayService` only handles hand overlay
-- `DrawingPathCalculator` only calculates paths
+### Open/Closed
+New behaviour is added by supplying a new port implementation (e.g. a new
+`ImagePreprocessor`) rather than editing the use case.
 
-### Open/Closed Principle (OCP)
-- Open for extension, closed for modification
-- New preprocessors can be added without changing use cases
-- Protocol-based design allows extensions
+### Liskov Substitution
+Any object satisfying a port's structurally-checked interface can replace
+another (the real adapters and the test fakes are interchangeable).
 
-### Liskov Substitution Principle (LSP)
-- Any `VideoWriterProtocol` implementation works
-- Preprocessor implementations are interchangeable
+### Interface Segregation
+Ports are intentionally tiny (`VideoWriter` has just `write_frame` and
+`release`; `OutputPathGenerator` has just `generate`).
 
-### Interface Segregation Principle (ISP)
-- Small, focused protocols
-- `VideoWriterProtocol` has minimal methods
-- No fat interfaces
-
-### Dependency Inversion Principle (DIP)
-- High-level modules don't depend on low-level modules
-- Use cases depend on protocols, not concrete implementations
-- Domain layer is independent
+### Dependency Inversion
+High-level policy (use case, services) depends on the ports it owns; low-level
+detail (OpenCV) depends on those ports. The dependency arrow is inverted.
 
 ## Data Flow
 
 ```
-CLI Input
-    ↓
-Use Case (Application Layer)
-    ↓
-Domain Entities + Value Objects
-    ↓
-Infrastructure Services (OpenCV, etc.)
-    ↓
-Video Output
+CLI (composition root)
+    ↓ builds adapters + use case
+GenerateSketchVideoUseCase
+    ↓ uses ports (ImageLoader, HandLoader, ImagePreprocessor, VideoWriter, OutputPathGenerator)
+    ↓ uses services (DimensionAdjuster, GridCalculator, DrawingPathCalculator, HandOverlayService)
+Domain entities + value objects
+    ↓ (adapters translate to/from OpenCV + disk)
+Video output
 ```
 
 ## Type Safety
 
-- **Pydantic**: Runtime validation for domain models
-- **Type Hints**: Full type coverage using Python 3.10+ syntax
-- **ty**: Type checking at development time
-- **numpy.typing**: Typed arrays for image data
+- **Pydantic**: runtime validation of domain models
+- **Type hints**: full coverage, Python 3.10+ syntax
+- **ty**: static type checking (`task typecheck`)
+- **numpy.typing**: typed arrays for pixel data
+- No `# type: ignore`; the OpenCV boundary uses explicit `typing.cast`
 
 ## Testing Strategy
 
-The architecture makes testing straightforward:
+Tests live in `tests/` and run with `uv run pytest` (or `task test`):
 
-1. **Unit Tests**: Test domain entities and value objects in isolation
-2. **Integration Tests**: Test use cases with mock infrastructure
-3. **End-to-End Tests**: Test CLI commands with real files
+1. **Domain / value-object tests** — validation, immutability, helpers
+2. **Service tests** — dimension rounding, grid splitting, drawing order, overlay
+3. **Use-case tests** — drive `GenerateSketchVideoUseCase` entirely with
+   in-memory fakes implementing the ports (no OpenCV, no filesystem)
+4. **CLI tests** — invoke commands with Click's `CliRunner` against a real image
 
-## Benefits of This Architecture
+## Benefits
 
-1. **Maintainability**: Clear separation of concerns
-2. **Testability**: Easy to test each layer independently
-3. **Flexibility**: Easy to swap implementations
-4. **Scalability**: Can add new features without breaking existing code
-5. **Type Safety**: Catches errors at development time
-6. **Clarity**: Business logic is clearly separated from technical details
+1. **Maintainability**: clear layer boundaries; OpenCV is isolated to adapters
+2. **Testability**: use cases run without OpenCV thanks to injected ports
+3. **Flexibility**: implementations are swappable behind the ports
+4. **Type safety**: `ty` + Pydantic catch errors early
+5. **Clarity**: business rules (grid, ordering, dimensions) are explicit services
 
 ## Future Enhancements
 
-Potential improvements that fit the architecture:
+Ideas that fit the current architecture:
 
-1. **Object Mask Support**: Add full implementation for drawing specific objects
-2. **Multiple Hand Styles**: Add strategy for different hand animations
-3. **Video Formats**: Add support for different output formats
-4. **Batch Processing**: Process multiple images in parallel
-5. **Web API**: Add FastAPI presentation layer alongside CLI
-6. **Custom Effects**: Add pluggable effect system
-7. **Progress Reporting**: Enhanced progress tracking with Rich
-
-## Dependencies Graph
-
-```
-Presentation Layer (CLI)
-         ↓
-Application Layer (Use Cases)
-         ↓
-Domain Layer (Entities + Value Objects)
-         ↑
-Infrastructure Layer (OpenCV, Video Writers)
-```
-
-The domain layer is at the center and knows nothing about outer layers, maintaining the core principle of Clean Architecture.
+1. **Object masking**: reintroduce as an optional port + mask-aware drawing order
+2. **Multiple hand styles**: an alternate `HandOverlayService` implementation
+3. **Extra output formats**: a second `VideoWriter` adapter
+4. **Batch processing**: a new use case composing the existing one
+5. **Web API**: a FastAPI presentation layer reusing the same use case
+6. **Progress reporting**: a `ProgressReporter` port injected into the use case

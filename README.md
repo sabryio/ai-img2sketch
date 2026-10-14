@@ -8,7 +8,6 @@ Convert images to animated sketch videos with a realistic drawing hand effect. T
 - ✋ Realistic drawing hand animation
 - 🎯 Customizable drawing speed and parameters
 - 📐 Automatic resolution optimization
-- 🖼️ Support for object masking (draw specific parts in sequence)
 - 💻 Modern CLI with rich output using Click and Rich
 - 🏗️ Clean Architecture with SOLID principles
 - ✅ Type-safe with Pydantic models and type hints
@@ -95,8 +94,7 @@ uv run img2sketch generate input.jpg --output ./my_videos
 uv run img2sketch generate input.jpg \
     --split-len 15 \
     --frame-rate 30 \
-    --object-skip-rate 10 \
-    --bg-skip-rate 16
+    --object-skip-rate 10
 ```
 
 ### Get Image Information
@@ -119,7 +117,6 @@ Options:
   --split-len INTEGER           Grid split length [5-100] (default: 10)
   --frame-rate INTEGER          Video frame rate [1-120] (default: 25)
   --object-skip-rate INTEGER    Object drawing skip rate [1-100] (default: 8)
-  --bg-skip-rate INTEGER        Background skip rate [1-100] (default: 14)
   --end-duration INTEGER        Final image duration [0-10] seconds (default: 2)
   --hand-image PATH             Custom hand image path
   --hand-mask PATH              Custom hand mask path
@@ -131,7 +128,6 @@ Options:
 - **split-len**: Divides the image into grids. Higher values = larger grids = faster drawing
 - **frame-rate**: Standard video frame rate (25-30 recommended)
 - **object-skip-rate**: Lower values = more detailed/slower drawing
-- **bg-skip-rate**: Can be higher for faster background completion
 - **end-duration**: Duration (in seconds) to display the final colored image
 
 ## Project Structure
@@ -140,8 +136,8 @@ This project follows **Clean Architecture** principles with clear separation of 
 
 ```
 ai-img2sketch/
-├── src/
-│   ├── domain/                    # Domain layer (business entities)
+├── src/ai_img2sketch/
+│   ├── domain/                    # Domain layer (pure business model)
 │   │   ├── entities/              # Core business entities
 │   │   │   ├── image.py          # Image entity
 │   │   │   ├── hand.py           # Hand entity
@@ -149,19 +145,31 @@ ai-img2sketch/
 │   │   └── value_objects/        # Immutable value objects
 │   │       ├── dimensions.py     # Dimensions value object
 │   │       └── video_config.py   # Video configuration
-│   ├── application/               # Application layer (use cases)
+│   ├── application/               # Application layer
+│   │   ├── ports/                # Interfaces the app depends on
+│   │   │   ├── image_loader.py
+│   │   │   ├── hand_loader.py
+│   │   │   ├── image_preprocessor.py
+│   │   │   ├── output_path_generator.py
+│   │   │   └── video_writer.py
+│   │   ├── services/             # Pure, stateless business logic
+│   │   │   ├── dimension_adjuster.py
+│   │   │   ├── drawing_calculator.py
+│   │   │   └── hand_overlay.py
 │   │   └── use_cases/
 │   │       └── generate_sketch_video.py  # Main use case
-│   ├── infrastructure/            # Infrastructure layer (implementations)
-│   │   ├── image_processing/     # Image processing services
-│   │   │   ├── preprocessor.py
-│   │   │   ├── hand_overlay.py
-│   │   │   ├── drawing_calculator.py
-│   │   │   └── dimension_adjuster.py
+│   ├── infrastructure/            # Adapters implementing the ports
+│   │   ├── image_processing/
+│   │   │   ├── image_loader.py   # OpenCVImageLoader
+│   │   │   ├── hand_loader.py    # OpenCVHandLoader
+│   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
-│   │       └── video_writer.py   # Video writing service
+│   │       ├── video_writer.py           # OpenCVVideoWriter
+│   │       └── output_path_generator.py
 │   └── presentation/              # Presentation layer (CLI)
-│       └── cli.py                # Click CLI interface
+│       ├── cli.py                # Click CLI interface
+│       └── composition.py        # Composition root (wires everything)
+├── tests/                        # pytest suite (unit + CLI)
 ├── main.py                       # Entry point
 ├── pyproject.toml               # Project configuration
 ├── uv.lock                      # Locked dependencies
@@ -183,17 +191,20 @@ ai-img2sketch/
 ### Code Quality
 
 ```bash
-# Type checking with ty
-uv run ty src/
+# Type checking with ty (checks src/ and tests/)
+uv run ty check
 
 # Linting with ruff
-uv run ruff check src/
+uv run ruff check src/ tests/
 
 # Format code
-uv run ruff format src/
+uv run ruff format src/ tests/
+
+# Run the test suite
+uv run pytest
 
 # Fix auto-fixable issues
-uv run ruff check --fix src/
+uv run ruff check --fix src/ tests/
 ```
 
 ### Adding Dependencies
@@ -262,9 +273,15 @@ This project follows **SOLID principles**:
 4. **Animation Generation**: Draws each section while overlaying the hand animation
 5. **Video Output**: Compiles frames into an MP4 video
 
-## Object Masking (Advanced)
+## Testing
 
-For more control, you can create JSON mask files to specify drawing order for different objects. Place mask files in the `images/` directory with the same name as your image.
+The test suite uses [pytest](https://docs.pytest.org/) and runs without touching
+OpenCV or the filesystem for the use case, thanks to the ports-and-adapters design:
+
+```bash
+uv run pytest        # or: task test
+task check           # lint + format + typecheck + tests
+```
 
 ## License
 
@@ -278,7 +295,7 @@ Contributions are welcome! Feel free to open issues or submit pull requests.
 
 ### Video Not Generating
 
-- Ensure image resolution is compatible with split length
+- Dimensions are automatically rounded to a multiple of the split length
 - Check that the `save_videos` directory exists
 - Verify all dependencies are installed correctly
 

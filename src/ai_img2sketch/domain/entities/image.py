@@ -1,7 +1,6 @@
 """Image entity."""
 
 from pathlib import Path
-from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -12,6 +11,8 @@ from ..value_objects.dimensions import Dimensions
 
 class Image(BaseModel):
     """Domain entity representing an image."""
+
+    model_config = {"arbitrary_types_allowed": True}
 
     data: npt.NDArray[np.uint8] = Field(description="Image data as numpy array")
     dimensions: Dimensions = Field(description="Image dimensions")
@@ -29,27 +30,7 @@ class Image(BaseModel):
 
     @classmethod
     def from_array(cls, data: npt.NDArray[np.uint8], path: Path | None = None) -> "Image":
-        """Create Image from numpy array."""
+        """Create an Image from a numpy array."""
         height, width = data.shape[:2]
         dimensions = Dimensions(width=width, height=height)
         return cls(data=data, dimensions=dimensions, path=path)
-
-    def to_grayscale(self) -> npt.NDArray[np.uint8]:
-        """Convert image to grayscale if it's color."""
-        if self.data.ndim == 2:
-            return self.data
-        import cv2
-
-        return cast(npt.NDArray[np.uint8], cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY))
-
-    def resize(self, target_dimensions: Dimensions) -> "Image":
-        """Resize image to target dimensions."""
-        import cv2
-
-        resized_data = cast(
-            npt.NDArray[np.uint8],
-            cv2.resize(self.data, (target_dimensions.width, target_dimensions.height)),
-        )
-        return Image.from_array(resized_data, self.path)
-
-    model_config = {"arbitrary_types_allowed": True}
