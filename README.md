@@ -188,7 +188,7 @@ Options:
   --split-len INTEGER           Grid split length [5-100] (default: 10)
   --frame-rate INTEGER          Video frame rate [1-120] (default: 25)
   --object-skip-rate INTEGER    Object drawing skip rate [1-100] (default: 8)
-  --draw-duration FLOAT         Target seconds for the drawing phase
+  --draw-duration FLOAT         Target seconds for the drawing phase, floored
   --end-duration INTEGER        Final image duration [0-10] seconds (default: 2)
   --hand-image PATH             Custom hand image path
   --hand-mask PATH              Custom hand mask path
@@ -201,7 +201,7 @@ Options:
 - **split-len**: Divides the image into grids. Higher values = larger grids = faster drawing
 - **frame-rate**: Standard video frame rate (25-30 recommended)
 - **object-skip-rate**: Lower values = more detailed/slower drawing
-- **draw-duration**: Target seconds for the drawing phase (see below); overrides `--object-skip-rate`
+- **draw-duration**: Target seconds for the drawing phase, floored (see below); overrides `--object-skip-rate`
 - **end-duration**: Duration (in seconds) to display the final colored image
 - **object-masks**: JSON file (see below) that draws regions in a specified order
 
@@ -224,10 +224,11 @@ img2sketch generate input.jpg --draw-duration 4 --end-duration 0
 The achievable duration is quantised. A drawing frame is written every
 `skip-rate` grid cells, so the drawing lasts `floor(cells / skip-rate) / frame-rate`
 seconds, where `cells` is the "Found N grid cells to draw" count the tool logs.
-`--draw-duration` chooses the skip rate whose result is closest to your target
-and logs the value it settled on. If the target cannot be hit closely it prints a
-warning — add detail with a smaller `--split-len` (more cells = finer control) or
-tweak `--frame-rate`.
+`--draw-duration` **floors** the drawing to your target: it picks the longest
+duration that does not exceed the target (so the drawing never runs past it) and
+logs the value it settled on. If the floored result is far from the target it
+prints a warning — add detail with a smaller `--split-len` (more cells = finer
+control) or tweak `--frame-rate`.
 
 `--draw-duration` sets the default drawing speed; a per-object `skip_rate` in an
 object-mask document still takes precedence for that object (the tool warns when

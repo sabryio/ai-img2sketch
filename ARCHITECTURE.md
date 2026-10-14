@@ -70,7 +70,7 @@ infrastructure; infrastructure imports the ports.
 - **GridCalculator**: splits an image into a grid
 - **DrawingPathCalculator**: nearest-neighbour drawing order
 - **DrawingPlanner**: groups grid cells into ordered, per-object drawing groups
-- **DrawingSpeedCalculator**: turns a target drawing duration into a skip rate
+- **DrawingSpeedCalculator**: floors a target drawing duration into a skip rate
   (and estimates the duration a skip rate produces)
 - **HandOverlayService**: composites the hand onto a frame
 - **VideoPathResolver**: names each video after its image (`<name>.mp4`) next to

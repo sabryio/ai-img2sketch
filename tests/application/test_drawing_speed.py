@@ -49,3 +49,45 @@ def test_zero_cells_returns_one() -> None:
 
 def test_non_positive_frame_rate_returns_one() -> None:
     assert DrawingSpeedCalculator.skip_rate_for_duration(50, 3.0, 0) == 1
+
+
+def test_target_is_floored_not_rounded_up() -> None:
+    # 100 cells at 25 fps: skip 1 -> 4.0 s, skip 2 -> 2.0 s. A 3 s target must
+    # floor to 2.0 s (skip 2), never round up to 4.0 s.
+    skip_rate = DrawingSpeedCalculator.skip_rate_for_duration(100, 3.0, 25)
+    achieved = DrawingSpeedCalculator.estimate_drawing_seconds(100, skip_rate, 25)
+
+    assert achieved == 2.0
+    assert achieved <= 3.0
+
+
+def test_floor_picks_the_largest_duration_not_exceeding_the_target() -> None:
+    # The chosen duration is <= the target, and any smaller skip rate (more
+    # frames) would overshoot it.
+    cell_count, frame_rate = 100, 25
+    for target in (0.5, 1.0, 2.2, 3.0, 7.5, 12.0):
+        skip_rate = DrawingSpeedCalculator.skip_rate_for_duration(cell_count, target, frame_rate)
+        achieved = DrawingSpeedCalculator.estimate_drawing_seconds(
+            cell_count, skip_rate, frame_rate
+        )
+
+        assert achieved <= target
+        if skip_rate > 1:
+            wider = DrawingSpeedCalculator.estimate_drawing_seconds(
+                cell_count, skip_rate - 1, frame_rate
+            )
+            assert wider > target
+
+
+def test_achieved_duration_never_exceeds_a_reachable_target() -> None:
+    for cell_count in (1, 10, 44, 200, 5000):
+        for frame_rate in (1, 25, 120):
+            for target in (1.0, 3.0, 600.0):
+                skip_rate = DrawingSpeedCalculator.skip_rate_for_duration(
+                    cell_count, target, frame_rate
+                )
+                achieved = DrawingSpeedCalculator.estimate_drawing_seconds(
+                    cell_count, skip_rate, frame_rate
+                )
+                if achieved > 0:
+                    assert achieved <= target

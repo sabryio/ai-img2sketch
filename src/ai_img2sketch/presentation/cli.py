@@ -80,7 +80,7 @@ def cli() -> None:
     "--draw-duration",
     type=click.FloatRange(min=0.1, max=600.0),
     default=None,
-    help="Target seconds for the drawing phase (overrides --object-skip-rate)",
+    help="Target seconds for the drawing phase, floored (overrides --object-skip-rate)",
 )
 @click.option(
     "--end-duration",

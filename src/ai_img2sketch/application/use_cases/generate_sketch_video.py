@@ -219,10 +219,10 @@ class GenerateSketchVideoUseCase:
         tolerance = 1.0 / config.frame_rate + 0.05
         if abs(achieved - config.draw_duration_sec) > tolerance:
             self._logger.warning(
-                "Cannot reach %.2fs exactly (%.2fs achieved); adjust --split-len "
-                "or --frame-rate for finer control",
-                config.draw_duration_sec,
+                "Floored drawing duration to %.2fs (target %.2fs); adjust "
+                "--split-len or --frame-rate for a closer match",
                 achieved,
+                config.draw_duration_sec,
             )
         return skip_rate
 
