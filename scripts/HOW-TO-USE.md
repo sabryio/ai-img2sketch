@@ -119,7 +119,7 @@ D:\programming\Python\ai-img2sketch\scripts\batch-process.exe -i config.json -o 
 All image-voice pairs are processed **in parallel**. For each pair:
 
 1. ✅ Detects voice duration (e.g., 8.5 seconds)
-2. ✅ Sizes the drawing to `voice duration - 2s` (e.g., 6.5s) and lets the CLI's default 2s end hold fill the rest, so the whole video matches the voice (8.5s)
+2. ✅ Sizes the drawing to `voice duration - 2s` (minimum 1s) and lets the CLI's default 2s end hold fill the rest, so the whole video matches the voice (8.5s)
 3. ✅ Never passes `--end-duration` (the CLI's 2s default always applies)
 4. ✅ Saves as `{image-name}.mp4` in output folder
 

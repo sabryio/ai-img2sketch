@@ -201,7 +201,7 @@ bun /path/to/scripts/process-videos.ts -i D:/project/config/videos.json -o D:/ou
 1. **Reads JSON config** - Loads image-voice pairs from JSON file
 2. **Detects voice duration** - Uses `ffprobe` to get accurate audio duration
 3. **Generates videos in parallel** - Calls `img2sketch generate` for every pair at once:
-   - `--draw-duration` is sized to `voice duration - 2s`
+   - `--draw-duration` is sized to `voice duration - 2s` (minimum 1s for short voices)
    - `--end-duration` is never passed, so the CLI's default 2s hold fills the rest
    - Together, drawing + hold matches the voice-over length
 4. **Outputs videos** - All videos are saved to the specified output directory

@@ -4,8 +4,8 @@
  * Process images with voice-overs
  * Reads a JSON file with [{image: "", voice: ""}] format
  * Detects each voice duration and generates a sketch video whose total length
- * matches it: the drawing is sized to (voice duration - 2s) and the CLI's
- * default 2s end hold fills the remainder.
+ * matches it: the drawing is sized to (voice duration - 2s), or at least 1s for
+ * very short voices, and the CLI's default 2s end hold fills the remainder.
  *
  * All paths are resolved to absolute paths for cross-directory compatibility
  */
@@ -22,8 +22,12 @@ import { existsSync } from "fs";
  */
 const END_DURATION_SEC = 2;
 
-/** Valid range for the CLI's `--draw-duration` option. */
-const MIN_DRAW_DURATION_SEC = 0.1;
+/**
+ * Bounds for the drawing phase. The minimum keeps even a very short voice-over
+ * visible (a 2s voice would otherwise leave nothing to draw); the maximum is the
+ * CLI's `--draw-duration` limit.
+ */
+const MIN_DRAW_DURATION_SEC = 1;
 const MAX_DRAW_DURATION_SEC = 600;
 
 interface ImageVoicePair {
@@ -78,9 +82,11 @@ async function getAudioDuration(audioPath: string): Promise<number> {
  * Size the drawing phase so the whole video matches the voice-over length.
  *
  * The CLI always holds the finished image for `END_DURATION_SEC`, so the
- * drawing target is `voice - END_DURATION_SEC`, clamped to the range the CLI
- * accepts. (The CLI floors the drawing to the target, so the final video never
- * runs longer than the voice-over.)
+ * drawing target is `voice - END_DURATION_SEC`, clamped to
+ * `[MIN_DRAW_DURATION_SEC, MAX_DRAW_DURATION_SEC]`. The minimum guarantees even
+ * a very short voice-over still gets a visible drawing (the video then runs
+ * slightly past the voice-over). Otherwise the CLI floors the drawing to the
+ * target, so the video never runs longer than the voice-over.
  */
 function resolveDrawDuration(voiceDuration: number): number {
   const target = voiceDuration - END_DURATION_SEC;
@@ -205,8 +211,8 @@ The script will:
 1. Read the JSON config file
 2. Detect the duration of each voice file
 3. Target each video's total length to its voice-over duration
-4. Size the drawing as (voice duration - 2s) and let the CLI's default 2s hold
-   fill the rest, so the whole video matches the voice
+4. Size the drawing as (voice duration - 2s), or at least 1s for very short
+   voices, and let the CLI's default 2s hold fill the rest
 5. Never pass --end-duration (the CLI default of 2s always applies)
 `);
     process.exit(0);
