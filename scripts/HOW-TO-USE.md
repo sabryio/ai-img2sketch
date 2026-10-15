@@ -119,8 +119,8 @@ D:\programming\Python\ai-img2sketch\scripts\batch-process.exe -i config.json -o 
 All image-voice pairs are processed **in parallel**. For each pair:
 
 1. ✅ Detects voice duration (e.g., 8.5 seconds)
-2. ✅ Generates sketch video with drawing duration = voice duration (8.5s)
-3. ✅ Adds `--end-duration` only to the last image (`0`, no end pause); every other image omits the flag and uses the CLI default
+2. ✅ Sizes the drawing to `voice duration - 2s` (e.g., 6.5s) and lets the CLI's default 2s end hold fill the rest, so the whole video matches the voice (8.5s)
+3. ✅ Never passes `--end-duration` (the CLI's 2s default always applies)
 4. ✅ Saves as `{image-name}.mp4` in output folder
 
 ## 💡 Pro Tips
@@ -179,7 +179,7 @@ winget install FFmpeg
 - Check spelling and file extensions
 
 ### Videos are cut off or too long
-The script matches drawing time to voice duration automatically. If something seems wrong:
+The script targets `drawing + 2s hold = voice duration` automatically (the drawing is floored, so it may finish marginally early). If something seems wrong:
 - Check voice file duration: `ffprobe voice.mp3`
 - Make sure audio isn't corrupted
 - Check img2sketch is working: `img2sketch info image.jpg`
@@ -239,18 +239,22 @@ Console output:
 ✓ Found 3 image-voice pair(s)
 
 🎵 Detecting duration for: D:\my-project\audio\voice1.mp3
-  Duration: 8.50 seconds
+🎵 Detecting duration for: D:\my-project\audio\voice2.mp3
+🎵 Detecting duration for: D:\my-project\audio\voice3.mp3
 
+  Voice: 8.50s -> draw 6.50s + 2s hold
 [1/3] Processing: D:\my-project\images\slide1.jpg
-  Draw duration: 8.50s
+  Draw duration: 6.50s (+ 2s hold)
   ✓ Generated video for D:\my-project\images\slide1.jpg
 
+  Voice: 12.30s -> draw 10.30s + 2s hold
 [2/3] Processing: D:\my-project\images\slide2.jpg
-  Draw duration: 12.30s
+  Draw duration: 10.30s (+ 2s hold)
   ✓ Generated video for D:\my-project\images\slide2.jpg
 
+  Voice: 6.80s -> draw 4.80s + 2s hold
 [3/3] Processing: D:\my-project\images\slide3.jpg
-  Draw duration: 6.80s, End duration: 0s
+  Draw duration: 4.80s (+ 2s hold)
   ✓ Generated video for D:\my-project\images\slide3.jpg
 
 ============================================================

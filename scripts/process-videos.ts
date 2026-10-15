@@ -3,7 +3,9 @@
 /**
  * Process images with voice-overs
  * Reads a JSON file with [{image: "", voice: ""}] format
- * Detects voice duration and generates videos accordingly
+ * Detects each voice duration and generates a sketch video whose total length
+ * matches it: the drawing is sized to (voice duration - 2s) and the CLI's
+ * default 2s end hold fills the remainder.
  *
  * All paths are resolved to absolute paths for cross-directory compatibility
  */
@@ -12,6 +14,17 @@ import { $ } from "bun";
 import { parseArgs } from "util";
 import { resolve, dirname, isAbsolute } from "path";
 import { existsSync } from "fs";
+
+/**
+ * Seconds the finished image is held after the drawing completes. Mirrors the
+ * CLI's `--end-duration` default; the batch tool relies on that default instead
+ * of passing the flag, so each drawing is sized to `voice - END_DURATION_SEC`.
+ */
+const END_DURATION_SEC = 2;
+
+/** Valid range for the CLI's `--draw-duration` option. */
+const MIN_DRAW_DURATION_SEC = 0.1;
+const MAX_DRAW_DURATION_SEC = 600;
 
 interface ImageVoicePair {
   image: string;
@@ -62,16 +75,33 @@ async function getAudioDuration(audioPath: string): Promise<number> {
 }
 
 /**
- * Generate a sketch video for an image with specific duration.
+ * Size the drawing phase so the whole video matches the voice-over length.
  *
- * `endDuration` is only applied to the last image; pass `undefined` for every
- * other image so the CLI's own default end duration applies.
+ * The CLI always holds the finished image for `END_DURATION_SEC`, so the
+ * drawing target is `voice - END_DURATION_SEC`, clamped to the range the CLI
+ * accepts. (The CLI floors the drawing to the target, so the final video never
+ * runs longer than the voice-over.)
+ */
+function resolveDrawDuration(voiceDuration: number): number {
+  const target = voiceDuration - END_DURATION_SEC;
+  const clamped = Math.min(
+    MAX_DRAW_DURATION_SEC,
+    Math.max(MIN_DRAW_DURATION_SEC, target),
+  );
+  // Trim floating-point noise (e.g. 3.4719999999999995 -> 3.472).
+  return Math.round(clamped * 1000) / 1000;
+}
+
+/**
+ * Generate a sketch video for an image with a target drawing duration.
+ *
+ * `--end-duration` is never passed, so the CLI's default hold always applies;
+ * the caller sizes `drawDuration` so the total matches the voice-over.
  */
 async function generateSketchVideo(
   imagePath: string,
   outputDir: string,
   drawDuration: number,
-  endDuration: number | undefined,
   index: number,
   total: number,
 ): Promise<void> {
@@ -89,9 +119,7 @@ async function generateSketchVideo(
 
   console.log(`\n[${index + 1}/${total}] Processing: ${absoluteImagePath}`);
   console.log(
-    endDuration === undefined
-      ? `  Draw duration: ${drawDuration.toFixed(2)}s`
-      : `  Draw duration: ${drawDuration.toFixed(2)}s, End duration: ${endDuration}s`,
+    `  Draw duration: ${drawDuration.toFixed(2)}s (+ ${END_DURATION_SEC}s hold)`,
   );
 
   const args = [
@@ -103,11 +131,6 @@ async function generateSketchVideo(
     "--draw-duration",
     drawDuration.toString(),
   ];
-
-  // Only the last image gets an explicit --end-duration (0 = no trailing hold).
-  if (endDuration !== undefined) {
-    args.push("--end-duration", endDuration.toString());
-  }
 
   try {
     await $`${args}`;
@@ -181,9 +204,10 @@ Example:
 The script will:
 1. Read the JSON config file
 2. Detect the duration of each voice file
-3. Generate sketch videos in parallel, with draw-duration matching the voice
-4. Only the last image gets --end-duration 0 (no trailing hold)
-5. Every other image omits --end-duration (CLI default applies)
+3. Target each video's total length to its voice-over duration
+4. Size the drawing as (voice duration - 2s) and let the CLI's default 2s hold
+   fill the rest, so the whole video matches the voice
+5. Never pass --end-duration (the CLI default of 2s always applies)
 `);
     process.exit(0);
   }
@@ -249,24 +273,21 @@ The script will:
 
   const results: ProcessResult[] = await Promise.all(
     config.map(async (pair, i): Promise<ProcessResult> => {
-      const isLast = i === total - 1;
-
       try {
         // Get voice duration
         console.log(`🎵 Detecting duration for: ${pair.voice}`);
         const voiceDuration = await getAudioDuration(pair.voice);
-        console.log(`  Duration: ${voiceDuration.toFixed(2)} seconds`);
 
-        // Generate video with appropriate parameters
-        // Only the last image gets --end-duration 0 (no trailing hold).
-        // Every other image omits --end-duration entirely.
-        const endDuration = isLast ? 0 : undefined;
+        // Size the drawing so draw + the CLI's default hold == voice duration.
+        const drawDuration = resolveDrawDuration(voiceDuration);
+        console.log(
+          `  Voice: ${voiceDuration.toFixed(2)}s -> draw ${drawDuration.toFixed(2)}s + ${END_DURATION_SEC}s hold`,
+        );
 
         await generateSketchVideo(
           pair.image,
           absoluteOutputDir,
-          voiceDuration,
-          endDuration,
+          drawDuration,
           i,
           total,
         );

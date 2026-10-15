@@ -50,11 +50,11 @@ bun ~/programming/ai-img2sketch/scripts/process-videos.ts -i ~/path/to/my-config
 ```
 Place the config next to your `images/` and `voices/` folders for portability!
 
-**Last image has no end pause:**
-The script adds `--end-duration` only to the last image (`0`). Every other image omits the flag entirely.
+**Video length matches the voice-over:**
+The script sizes the drawing to `voice duration - 2s`; the CLI's default 2s end hold fills the rest, so each video matches its narration. (The CLI floors the drawing, so a video can finish marginally early.)
 
-**Voice duration = drawing duration:**
-The script detects how long each voice file is and sets the drawing time to match.
+**No end-duration option:**
+The script never passes `--end-duration`, so the CLI's default 2s hold always applies.
 
 **Videos are generated in parallel:**
 All image-voice pairs are processed at once, so large batches finish faster.
