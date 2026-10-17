@@ -9,7 +9,8 @@ starts, locates, and talks to it — including the Docker-not-running case.
 ## Architecture
 
 - **Backend**: FastAPI server (`ai_img2sketch.presentation.api.app:app`),
-  containerized, listening on port 8000.
+  containerized or shipped as the `img2sketch-api` sidecar binary, listening on
+  port 8000. Runs a **single worker on purpose** — the SSE bus is in-process.
 - **REST**: endpoints under `/api/v1/` (see the table below).
 - **Event stream**: SSE at `/api/v1/events` mirroring the REST lifecycle.
 - **CORS**: pre-configured for Tauri webview origins:
@@ -17,24 +18,43 @@ starts, locates, and talks to it — including the Docker-not-running case.
 
 ## Starting the Backend
 
-### Option 1: Docker Compose (recommended)
+Pick the strategy that fits the app release. The Dockerized service and the
+sidecar binary are the **same server** — endpoints and settings identical.
+
+### Option A: `img2sketch-api` as a Tauri sidecar (simplest)
+
+The wheel installs an `img2sketch-api` executable. Bundle PyInstaller-compiled
+(or otherwise distributed) binary as a Tauri `externalBin` and Tauri's Rust core
+starts/stops it with the app — no Docker on the user's machine:
+
+```json
+{
+  "bundle": {
+    "externalBin": ["binaries/img2sketch-api"]
+  }
+}
+```
+
+```typescript
+// spawn it once at boot (Rust: tauri_plugin_shell / Command::new_sidecar)
+// then talk to http://127.0.0.1:8000 from the webview
+```
+
+Use `APP_HOST` / `APP_PORT` to keep the port configurable, and gate the UI on
+the `/api/v1/health` probe (see "Recommended lifecycle").
+
+### Option B: Docker Compose
 
 ```bash
 cd /path/to/ai-img2sketch
-docker compose up -d     # or: img2sketch... see BackendManager below
+docker compose up -d
 ```
 
 The compose stack binds `127.0.0.1:8000` (localhost only, the webview is on the
-same machine) and reports health at `/api/v1/health`.
+same machine) and reports health at `/api/v1/health`. Files and generated
+videos cross the container through the documented volumes.
 
-### Option 2: Docker directly
-
-```bash
-docker build -t ai-img2sketch-api .
-docker run -p 127.0.0.1:8000:8000 ai-img2sketch-api
-```
-
-### Option 3: Local development (no Docker)
+### Option C: Local development (no Docker, no packaging)
 
 ```bash
 uv sync                      # once
@@ -75,11 +95,33 @@ const response = await fetch("http://localhost:8000/api/v1/sketches", {
 const result = await response.json(); // { output_path: "/app/output/photo.mp4" }
 ```
 
+### Batch request example
+
+```typescript
+const response = await fetch("http://localhost:8000/api/v1/sketches/batch", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    input_dir: "/app/media/photos", // folder of images (inside the container)
+    output_dir: "/app/output",
+    config: { split_len: 16 },      // same fields as the single request
+    object_mask_path: "/app/media/masks.json",   // one masks file for the folder
+    hand_image_path: "/app/media/my-hand.png",   // optional, else bundled assets
+    hand_mask_path: "/app/media/my-hand-mask.png", // optional, else bundled assets
+  }),
+});
+const result = await response.json();
+// { input_dir, items: [{ image, output_path | null, error | null }, ...] }
+```
+
+### Defaults and parity
+
 Every field is optional apart from the input path; anything omitted falls back
 to the same defaults the CLI uses (frame rate 25, split 10, skip 8, end hold
-2 s, threshold 10, bundled drawing hand). The API is a superset of the CLI
-options — `black_pixel_threshold` was previously CLI-internal only. All
-unchanged fields of `POST /sketches/batch` apply per directory.
+2 s, threshold 10, bundled drawing hand). The API is a **superset** of the CLI
+options — `black_pixel_threshold` was previously CLI-internal only. Nothing
+generation-related lives only in the CLI any more, so a future release can drop
+the CLI and the Tauri app loses nothing.
 
 ### Error mapping (shared by the SSE failure events)
 
@@ -122,30 +164,48 @@ in `image_path` / `input_dir` / `output_dir`.
 ```typescript
 const source = new EventSource("http://localhost:8000/api/v1/events");
 
-for (const name of [
+const names = [
   "sketch.started",
   "sketch.completed",
   "sketch.failed",
   "batch.started",
   "batch.completed",
   "batch.failed",
-]) {
+] as const;
+
+for (const name of names) {
   source.addEventListener(name, (event) => {
     const data = JSON.parse((event as MessageEvent).data);
-    console.log(name, data);
+    // e.g. preload the video from data.output_path once sketch.completed fires
   });
 }
 
 source.onopen = () => console.log("stream attached");
-source.onerror = () => console.warn("connection lost; browser retries (see retry)");
+source.onerror = () => console.warn("connection lost; browser auto-retries (retry: 5000)");
+
+// Close when the app window unloads to stop keeping the connection alive:
+window.addEventListener("beforeunload", () => source.close());
 ```
 
-## Starting the Backend from Tauri
+Two things the UI should expect right now:
+
+- Events are **lifecycle-level** (started/completed/failed per request). Per-frame
+  progress would need the planned `ProgressReporter` port (see
+  `ARCHITECTURE.md` → Future Enhancements); design the progress UI around the
+  three lifecycle states.
+- `sketch.completed` / `batch.completed` arrive **before** the POST response
+  returns on fast machines sometimes — use the response as the source of truth
+  for navigation and the events as ambient updates for other views.
+
+## Starting the Backend Programmatically (Python helper)
 
 `ai_img2sketch.infrastructure.tauri.backend_client` (packaged with the app)
-wraps the Docker plumbing:
+wraps the Docker plumbing for script-driven or Python-side startup; the Rust
+core would normally use the sidecar/compose commands directly:
 
 ```python
+from pathlib import Path
+
 from ai_img2sketch.infrastructure.tauri.backend_client import (
     BackendManager,
     is_backend_reachable,
@@ -154,25 +214,43 @@ from ai_img2sketch.infrastructure.tauri.backend_client import (
 manager = BackendManager(compose_file=Path("docker-compose.yml"))
 handle = manager.start()          # raises RuntimeError if Docker is not running
 if not is_backend_reachable(handle):
-    ...
+    ...  # surface "backend is starting, try again shortly" in the UI
 ...
 manager.stop()                    # docker compose down
 ```
 
 `handle.base_url` is `http://localhost:8000` as reachable from the same machine.
 
+## Recommended Lifecycle in the Tauri App
+
+On app boot:
+
+1. **Reach out** — poll `GET /api/v1/health` until it returns `{"status": "ok"}`.
+2. **If unreachable** and the Docker runtime is bundled into the release — start
+   the backend (`docker compose up -d` via the shell, or `BackendManager`), then
+   poll again.
+3. **If Docker is not running/installed** — fall back to the sidecar
+   (`img2sketch-api`) or show a clear message ("Start Docker Desktop and try
+   again") with a link to the install page.
+4. **Subscribe** to `/api/v1/events` once, at app start, and keep it open for
+   the whole session.
+5. On window close, either leave the container running
+   (`restart: unless-stopped` keeps it healthy) or tear it down explicitly
+   (`docker compose down` / `manager.stop()`).
+
 ## Handling the Case Where Docker Is Not Running
 
 `BackendManager.start()` raises `RuntimeError("Docker is not running…")` when
-`docker info` fails (daemon down or Docker not installed). Decide the fallback
-in the shell:
+`docker info` fails (daemon down or Docker not installed). The fallback ladder
+in the UI:
 
-1. **Detect** — guard every startup with `manager.is_docker_running()`.
-2. **Inform** — surface the message ("Start Docker Desktop and try again").
-3. **Fallback** — offer running the backend without Docker
-   (`img2sketch-api`), which is the same server on port 8000.
-4. **Verify** — after start, poll `/api/v1/health` (compose has its own
-   healthcheck and `restart: unless-stopped`).
+1. **Detect** — guard every Docker start with `manager.is_docker_running()`.
+2. **Inform** — surface the message ("Start Docker Desktop and try again"),
+   ideally with a link to Docker's install page.
+3. **Fallback** — offer the sidecar (`img2sketch-api`), which is the same
+   server on port 8000 without Docker.
+4. **Verify** — after any start, poll `/api/v1/health` until `200` before the
+   first generation call.
 
 ## Environment Variables
 

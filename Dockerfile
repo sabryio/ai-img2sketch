@@ -2,8 +2,9 @@
 
 # ---- Builder -------------------------------------------------------------
 # All heavy work (compile, wheel build) happens here; only the finished
-# virtual environment is copied into the final image.
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+# virtual environment is copied into the final image. Python 3.13 matches the
+# project's locked runtime (the uv-managed .venv on the dev machine).
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
@@ -12,10 +13,18 @@ WORKDIR /app
 
 # Lockfile first for better layer caching.
 COPY pyproject.toml uv.lock README.md ./
+
+# Resolve dependencies without the project (this layer only invalidates when
+# the lockfile changes).
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Then add the sources and build + install the project wheel (uv_build needs
+# src/ai_img2sketch on disk to compile it).
+COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
 # ---- Runtime -------------------------------------------------------------
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # System libraries the bundled OpenCV wheels need at import time.
 RUN apt-get update \
