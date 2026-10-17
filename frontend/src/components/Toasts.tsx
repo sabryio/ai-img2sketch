@@ -7,10 +7,11 @@ import {
   Info,
   X,
 } from "lucide-react";
-import { ToastItem, useGenerationStore } from "../stores/generation";
+import { useNotificationsStore } from "../stores/notifications";
 
 export const Toasts: React.FC = () => {
-  const { toasts, dismissToast } = useGenerationStore();
+  const toasts = useNotificationsStore((state) => state.toasts);
+  const dismissToast = useNotificationsStore((state) => state.dismissToast);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   if (toasts.length === 0) return null;

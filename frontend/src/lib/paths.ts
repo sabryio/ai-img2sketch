@@ -13,6 +13,13 @@
  * - Request paths and output paths are plain local paths as-is.
  */
 
+/**
+ * How the backend is reached:
+ * - `docker` — container with the `./media` and `./output` volumes mounted
+ * - `sidecar` — native process with direct access to host paths
+ */
+export type BackendMode = "docker" | "sidecar";
+
 export interface PathConfig {
   projectRoot: string;
   mediaSubdir: string;
@@ -47,7 +54,7 @@ export function getBasename(filePath: string): string {
  */
 export function mapHostPathToBackend(
   hostPath: string,
-  mode: "docker" | "sidecar",
+  mode: BackendMode,
   config: PathConfig = DEFAULT_PATH_CONFIG,
 ): { backendPath: string; needsCopy: boolean; destinationHostPath?: string } {
   const norm = normalizePath(hostPath.trim());
@@ -87,7 +94,7 @@ export function mapHostPathToBackend(
  */
 export function mapBackendPathToHost(
   backendPath: string,
-  mode: "docker" | "sidecar",
+  mode: BackendMode,
   config: PathConfig = DEFAULT_PATH_CONFIG,
 ): string {
   const norm = normalizePath(backendPath.trim());
@@ -112,37 +119,6 @@ export function mapBackendPathToHost(
       "/",
     );
     return `${hostMediaDir}/${rel}`.replace("//", "/");
-  }
-
-  return norm;
-}
-
-/**
- * Converts a local file path to a URL that can be loaded in an HTML5 video player inside Tauri
- * or falls back cleanly in web mode.
- */
-export function toMediaAssetUrl(filePath: string): string {
-  if (!filePath) return "";
-
-  // If it's already an http or data or blob URL
-  if (
-    filePath.startsWith("http://") ||
-    filePath.startsWith("https://") ||
-    filePath.startsWith("data:") ||
-    filePath.startsWith("blob:")
-  ) {
-    return filePath;
-  }
-
-  // In Tauri 2: the asset protocol is registered as asset:// or via convertFileSrc
-  const norm = normalizePath(filePath);
-  // If running in browser where asset:// is unavailable, return as-is
-  if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
-    // Windows vs POSIX asset URL format
-    if (/^[A-Za-z]:/.test(norm)) {
-      return `asset://localhost/${norm}`;
-    }
-    return `asset://localhost${norm.startsWith("/") ? "" : "/"}${norm}`;
   }
 
   return norm;

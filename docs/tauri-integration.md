@@ -13,8 +13,9 @@ starts, locates, and talks to it — including the Docker-not-running case.
   port 8000. Runs a **single worker on purpose** — the SSE bus is in-process.
 - **REST**: endpoints under `/api/v1/` (see the table below).
 - **Event stream**: SSE at `/api/v1/events` mirroring the REST lifecycle.
-- **CORS**: pre-configured for Tauri webview origins:
-  `http://localhost:1420`, `http://tauri.localhost`, `tauri://localhost`.
+- **CORS**: pre-configured for the Tauri webview origins and the `frontend/`
+  dev server: `http://localhost:1420`, `http://localhost:3000`,
+  `http://127.0.0.1:3000`, `http://tauri.localhost`, `tauri://localhost`.
 
 ## Starting the Backend
 

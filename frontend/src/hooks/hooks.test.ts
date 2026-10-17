@@ -1,6 +1,6 @@
-import { expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import type { EventData } from "../rpc/contract";
-import { useEventStream } from "./useEventStream";
+import { toSseState, useEventStream } from "./useEventStream";
 import { useGenerateSketch } from "./useGenerateSketch";
 import { useHealth } from "./useHealth";
 
@@ -13,9 +13,9 @@ import { useHealth } from "./useHealth";
  * compiling perfectly.
  */
 
-it("useEventStream data is one discriminated event, not an array of them", () => {
+it("useEventStream data is the accumulated event array, not a single event", () => {
   expectTypeOf<ReturnType<typeof useEventStream>["data"]>().toEqualTypeOf<
-    EventData | undefined
+    EventData[] | undefined
   >();
 });
 
@@ -32,4 +32,36 @@ it("useGenerateSketch is typed to the request and response DTOs", () => {
   expectTypeOf<Result["data"]>().toEqualTypeOf<
     { output_path: string } | undefined
   >();
+});
+
+const event: EventData = {
+  event: "sketch.started",
+  image: "/app/media/a.png",
+  output_path: "/app/output/a.mp4",
+};
+
+describe("toSseState", () => {
+  it("reports closed when the stream is not mounted", () => {
+    expect(
+      toSseState({ status: "pending", fetchStatus: "fetching", data: undefined }, false),
+    ).toBe("closed");
+  });
+
+  it("reports connecting until the first event arrives", () => {
+    expect(
+      toSseState({ status: "pending", fetchStatus: "fetching", data: undefined }, true),
+    ).toBe("connecting");
+  });
+
+  it("reports online once an event has been seen", () => {
+    expect(
+      toSseState({ status: "success", fetchStatus: "fetching", data: [event] }, true),
+    ).toBe("online");
+  });
+
+  it("reports reconnecting after a drop", () => {
+    expect(
+      toSseState({ status: "error", fetchStatus: "idle", data: [event] }, true),
+    ).toBe("reconnecting");
+  });
 });

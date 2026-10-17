@@ -1,12 +1,16 @@
 /**
  * Reusable hooks over the typed oRPC contract (`src/rpc`). Each one wraps the
- * matching TanStack Query utility, so components never build URLs or keys by
- * hand.
+ * matching TanStack Query utility, so components never build URLs or cache keys
+ * by hand.
  *
  * Hooks need the `QueryClientProvider` in `main.tsx`.
  */
 
-export { useEventStream } from "./useEventStream";
+export { useElapsed } from "./useElapsed";
+export { useEventNotifications } from "./useEventNotifications";
+export { useEventStream, toSseState } from "./useEventStream";
+export type { SseState } from "./useEventStream";
 export { useGenerateBatch } from "./useGenerateBatch";
 export { useGenerateSketch } from "./useGenerateSketch";
 export { useHealth } from "./useHealth";
+export type { QueryOverrides } from "./types";

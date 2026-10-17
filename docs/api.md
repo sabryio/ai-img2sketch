@@ -220,10 +220,11 @@ Anonymous comments (`: \n\n`) are handled by the browser and never dispatched.
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port (1–65535) |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
-| `APP_CORS_ORIGINS` | `["http://localhost:1420", "http://tauri.localhost", "tauri://localhost"]` | JSON list of allowed CORS origins |
+| `APP_CORS_ORIGINS` | `["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]` | JSON list of allowed CORS origins |
 
 CORS allows credentials and all methods/headers for the listed origins; the
-default list covers the Tauri dev server and both Tauri webview origins.
+default list covers the Tauri dev server, the `frontend/` Vite dev server
+(`bun run dev`, port 3000) and both Tauri webview origins.
 
 ---
 

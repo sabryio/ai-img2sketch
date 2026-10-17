@@ -14,7 +14,7 @@ services:
       APP_PORT: 8000
       APP_LOG_LEVEL: info
       APP_CORS_ORIGINS: >
-        ["http://localhost:1420", "http://tauri.localhost", "tauri://localhost"]
+        ["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]
     volumes:
       # Client files for the API (paths passed in requests must live here).
       - ./media:/app/media

@@ -1,43 +1,43 @@
 import React, { useState } from "react";
 import {
-  Activity,
   Box,
   Check,
   FolderTree,
   Radio,
-  RefreshCw,
   Server,
-  Sparkles,
-  Terminal,
+  Trash2,
   X,
 } from "lucide-react";
+import type { SseState } from "../hooks";
+import { DEFAULT_API_ORIGIN } from "../lib/apiOrigin";
+import { queryClient } from "../lib/queryClient";
 import { useBackendStore } from "../stores/backend";
-import { useGenerationStore } from "../stores/generation";
+import { useNotificationsStore } from "../stores/notifications";
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  sseState: SseState;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
+  sseState,
 }) => {
   const {
-    apiBase,
-    setApiBaseUrl,
+    apiOrigin,
+    setApiOrigin,
     mode,
     setMode,
     pathConfig,
     setPathConfig,
-    simulatorActive,
-    toggleSimulator,
-    checkHealthOnce,
   } = useBackendStore();
 
-  const { eventsHistory, sseState } = useGenerationStore();
+  const events = useNotificationsStore((state) => state.events);
+  const clearEvents = useNotificationsStore((state) => state.clearEvents);
 
-  const [localApiBase, setLocalApiBase] = useState(apiBase);
+  const [localApiOrigin, setLocalApiOrigin] = useState(apiOrigin);
   const [projectRoot, setProjectRoot] = useState(pathConfig.projectRoot);
   const [mediaSubdir, setMediaSubdir] = useState(pathConfig.mediaSubdir);
   const [outputSubdir, setOutputSubdir] = useState(pathConfig.outputSubdir);
@@ -47,12 +47,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    setApiBaseUrl(localApiBase);
-    setPathConfig({
-      projectRoot,
-      mediaSubdir,
-      outputSubdir,
-    });
+
+    const originChanged = localApiOrigin.trim() !== apiOrigin;
+    setApiOrigin(localApiOrigin);
+    setPathConfig({ projectRoot, mediaSubdir, outputSubdir });
+
+    if (originChanged) {
+      // Every cached result belongs to the old origin: drop them and let the
+      // active queries (health, the event stream) re-run against the new one.
+      queryClient.clear();
+    }
+
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -95,15 +100,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
-                value={localApiBase}
-                onChange={(e) => setLocalApiBase(e.target.value)}
-                placeholder="http://localhost:8000"
+                value={localApiOrigin}
+                onChange={(e) => setLocalApiOrigin(e.target.value)}
+                placeholder={DEFAULT_API_ORIGIN}
                 className="flex-1 px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 required
               />
               <button
                 type="button"
-                onClick={() => setLocalApiBase("http://localhost:8000")}
+                onClick={() => setLocalApiOrigin(DEFAULT_API_ORIGIN)}
                 className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition-colors"
                 title="Reset to default"
               >
@@ -112,7 +117,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
             <p className="text-[11px] text-zinc-500">
               Target address of the FastAPI + SSE backend (Dockerized container
-              or sidecar).
+              or sidecar). Applied immediately on save.
             </p>
           </div>
 
@@ -227,33 +232,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* Web Preview Demo Simulator Toggle */}
-          <div className="pt-2 border-t border-zinc-800">
-            <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800">
-              <div className="space-y-0.5">
-                <span className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-                  Web Demo Simulator
-                </span>
-                <p className="text-[11px] text-zinc-500">
-                  Simulate healthy backend, mock video generation, and corrupt
-                  batch handling inside browser preview.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => toggleSimulator()}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                  simulatorActive
-                    ? "bg-emerald-600 text-white"
-                    : "bg-zinc-800 text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {simulatorActive ? "Enabled" : "Disabled"}
-              </button>
-            </div>
-          </div>
-
           {/* SSE Stream Diagnostics & Recent Events */}
           <div className="space-y-2 pt-2 border-t border-zinc-800">
             <div className="flex items-center justify-between text-xs">
@@ -261,18 +239,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <Radio className="w-3.5 h-3.5 text-indigo-400" />
                 Live SSE Stream Log
               </span>
-              <span className="text-[11px] font-mono text-zinc-500">
-                State: {sseState} &bull; {eventsHistory.length} events
-              </span>
+              <div className="flex items-center gap-2">
+                <span
+                  data-testid="sse-state"
+                  className="text-[11px] font-mono text-zinc-500"
+                >
+                  State: {sseState} &bull; {events.length} events
+                </span>
+                {events.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearEvents}
+                    className="text-zinc-500 hover:text-zinc-300"
+                    aria-label="Clear event log"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
-            <div className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 max-h-36 overflow-y-auto font-mono text-[11px] space-y-1">
-              {eventsHistory.length === 0 ? (
+            <div
+              data-testid="event-log"
+              className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 max-h-36 overflow-y-auto font-mono text-[11px] space-y-1"
+            >
+              {events.length === 0 ? (
                 <div className="text-zinc-600 text-center py-2">
                   No events received yet (stream listening)
                 </div>
               ) : (
-                eventsHistory.map((ev) => (
+                events.map((ev) => (
                   <div
                     key={ev.id}
                     className="text-zinc-400 flex items-start gap-2"
@@ -281,7 +277,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {new Date(ev.timestamp).toLocaleTimeString()}
                     </span>
                     <span className="text-indigo-400 font-semibold">
-                      {ev.type}:
+                      {ev.name}:
                     </span>
                     <span className="truncate text-zinc-300">
                       {JSON.stringify(ev.data)}

@@ -9,12 +9,12 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { SketchConfig } from "../lib/api/types";
+import type { SketchOptions } from "../rpc/contract";
 import { openDirectoryDialog, openImageFileDialog } from "../lib/tauri";
 
 interface AdvancedConfigFormProps {
-  config: SketchConfig;
-  onChangeConfig: (newConfig: SketchConfig) => void;
+  config: SketchOptions;
+  onChangeConfig: (newConfig: SketchOptions) => void;
   outputDir: string;
   onChangeOutputDir: (dir: string) => void;
   objectMaskPath?: string;
@@ -42,9 +42,9 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [showRarelyTouched, setShowRarelyTouched] = useState(false);
 
-  const updateField = <K extends keyof SketchConfig>(
+  const updateField = <K extends keyof SketchOptions>(
     key: K,
-    value: SketchConfig[K],
+    value: SketchOptions[K],
   ) => {
     onChangeConfig({
       ...config,
@@ -250,9 +250,11 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
                 step={0.1}
                 value={config.draw_duration_sec ?? ""}
                 onChange={(e) => {
-                  const val =
-                    e.target.value === "" ? null : parseFloat(e.target.value);
-                  updateField("draw_duration_sec", val);
+                  const raw = e.target.value;
+                  updateField(
+                    "draw_duration_sec",
+                    raw === "" ? undefined : parseFloat(raw),
+                  );
                 }}
                 placeholder="Auto (based on strokes)"
                 className="w-full px-2.5 py-1.5 text-xs bg-zinc-900 border border-zinc-700/80 rounded text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
@@ -276,7 +278,7 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
                 type="range"
                 min={0}
                 max={10}
-                step={0.5}
+                step={1}
                 value={config.end_duration_sec ?? 2}
                 onChange={(e) =>
                   updateField("end_duration_sec", Number(e.target.value))

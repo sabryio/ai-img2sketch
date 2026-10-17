@@ -2,26 +2,20 @@ import React, { useState } from "react";
 import {
   AlertCircle,
   Box,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
-  Cpu,
-  ExternalLink,
-  Info,
-  Play,
   RefreshCw,
   Server,
-  Sparkles,
+  Square,
   Terminal,
 } from "lucide-react";
+import { useHealth } from "../hooks";
+import { toAppError } from "../lib/errors";
 import { useBackendStore } from "../stores/backend";
 
 export const BackendGate: React.FC = () => {
   const {
-    health,
-    pollCount,
-    lastHealthError,
-    apiBase,
+    apiOrigin,
     dockerRunning,
     dockerProbeDetails,
     isCheckingDocker,
@@ -29,12 +23,17 @@ export const BackendGate: React.FC = () => {
     backendActionLog,
     mode,
     setMode,
-    checkHealthOnce,
     probeDocker,
     startDocker,
+    stopDocker,
     startSidecar,
-    toggleSimulator,
   } = useBackendStore();
+
+  // Same query `App` polls: the gate and the header can never disagree.
+  const health = useHealth();
+  const lastHealthError = health.error
+    ? toAppError(health.error, mode).message
+    : null;
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
@@ -46,7 +45,7 @@ export const BackendGate: React.FC = () => {
           <div className="inline-flex p-3 rounded-2xl bg-zinc-800/80 border border-zinc-700/60 shadow-inner">
             <RefreshCw
               className={`w-8 h-8 text-indigo-400 ${
-                health === "starting" || isStartingBackend ? "animate-spin" : ""
+                health.isPending || isStartingBackend ? "animate-spin" : ""
               }`}
             />
           </div>
@@ -57,7 +56,7 @@ export const BackendGate: React.FC = () => {
             <p className="text-sm text-zinc-400 mt-1">
               Targeting{" "}
               <code className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                {apiBase}
+                {apiOrigin}
               </code>
             </p>
           </div>
@@ -72,10 +71,12 @@ export const BackendGate: React.FC = () => {
               <code className="font-mono text-zinc-400">/api/v1/health</code>...
             </span>
           </div>
-          <span className="text-zinc-500 font-mono">Attempt #{pollCount}</span>
+          <span className="text-zinc-500 font-mono">
+            Attempt #{health.errorUpdateCount + 1}
+          </span>
         </div>
 
-        {/* Docker-not-running UX: clear, non-blocking panel */}
+        {/* Backend-not-running UX: clear, non-blocking panel */}
         <div className="mt-6 p-4 rounded-xl bg-zinc-950/90 border border-zinc-800 space-y-4">
           <div className="flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
@@ -153,27 +154,31 @@ export const BackendGate: React.FC = () => {
             </button>
           </div>
 
-          {/* Manual Retry & Web Simulator Buttons */}
+          {dockerRunning && (
+            <button
+              type="button"
+              onClick={() => stopDocker()}
+              disabled={isStartingBackend}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-medium text-xs border border-zinc-800 disabled:opacity-50 transition-colors"
+            >
+              <Square className="w-3 h-3" />
+              Stop Docker backend
+            </button>
+          )}
+
           <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-xs">
             <button
               type="button"
-              onClick={() => checkHealthOnce()}
+              onClick={() => health.refetch()}
               disabled={isStartingBackend}
               className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Retry now
             </button>
-
-            <button
-              type="button"
-              onClick={() => toggleSimulator(true)}
-              className="flex items-center gap-1.5 text-indigo-400 hover:text-indigo-300 font-medium"
-              title="Activate built-in simulator to test UI, video previews, and batch processing without a live server"
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              Try Demo Simulator
-            </button>
+            <span className="text-[11px] text-zinc-600 font-mono">
+              polling every 2s while down
+            </span>
           </div>
         </div>
 
@@ -230,7 +235,7 @@ export const BackendGate: React.FC = () => {
                 </div>
                 <p className="pt-1">Or verify endpoint with curl:</p>
                 <div className="p-2 rounded bg-zinc-950 font-mono text-zinc-300 border border-zinc-800 select-all">
-                  curl {apiBase}/api/v1/health
+                  curl {apiOrigin}/api/v1/health
                 </div>
               </div>
             </div>

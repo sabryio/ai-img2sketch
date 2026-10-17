@@ -1,94 +1,168 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   Copy,
-  ExternalLink,
-  Eye,
   FileImage,
   Film,
   FolderOpen,
   Info,
   Loader2,
   Play,
-  RotateCcw,
   Sparkles,
   Upload,
 } from "lucide-react";
-import { SketchConfig, SketchRequest } from "../lib/api/types";
+import { useElapsed, useGenerateSketch } from "../hooks";
+import type { SketchOptions } from "../rpc/contract";
+import { toAppError } from "../lib/errors";
+import { mapBackendPathToHost, mapHostPathToBackend } from "../lib/paths";
 import {
-  mapBackendPathToHost,
-  mapHostPathToBackend,
-  toMediaAssetUrl,
-} from "../lib/paths";
-import { convertPathToAssetUrl, openImageFileDialog } from "../lib/tauri";
+  convertPathToAssetUrl,
+  copyHostFile,
+  openImageFileDialog,
+} from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
-import { useGenerationStore } from "../stores/generation";
+import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
 
-export const SingleSketchView: React.FC = () => {
-  const { mode, pathConfig, ready, simulatorActive } = useBackendStore();
-  const {
-    inFlightSingle,
-    singleElapsedSec,
-    singleResult,
-    singleResolvedHostPath,
-    lastError,
-    executeSingleGeneration,
-    resetSingleResult,
-    clearLastError,
-  } = useGenerationStore();
+interface SingleSketchViewProps {
+  /** False once the backend stops answering; the form is then disabled. */
+  ready: boolean;
+}
+
+/** Form defaults, matching the engine's documented defaults. */
+const DEFAULT_CONFIG: SketchOptions = {
+  frame_rate: 25,
+  split_len: 10,
+  object_skip_rate: 8,
+  end_duration_sec: 2,
+  black_pixel_threshold: 10,
+};
+
+export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => {
+  const { mode, pathConfig } = useBackendStore();
+  const addToast = useNotificationsStore((state) => state.addToast);
 
   const [imagePath, setImagePath] = useState<string>("");
   const [outputDir, setOutputDir] = useState<string>("");
   const [objectMaskPath, setObjectMaskPath] = useState<string>("");
   const [handImagePath, setHandImagePath] = useState<string>("");
   const [handMaskPath, setHandMaskPath] = useState<string>("");
+  const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
+  const [errorDismissed, setErrorDismissed] = useState(false);
   const [videoAssetUrl, setVideoAssetUrl] = useState<string>("");
   const [videoFailedToLoad, setVideoFailedToLoad] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
   const [copiedError, setCopiedError] = useState<boolean>(false);
 
-  const [config, setConfig] = useState<SketchConfig>({
-    frame_rate: 25,
-    split_len: 10,
-    object_skip_rate: 8,
-    draw_duration_sec: null,
-    end_duration_sec: 2,
-    black_pixel_threshold: 10,
+  const sketch = useGenerateSketch({
+    onSuccess: (data) => {
+      const hostPath = mapBackendPathToHost(data.output_path, mode, pathConfig);
+      addToast({
+        type: "success",
+        title: "Sketch Video Generated",
+        message: `Video saved to ${hostPath}`,
+      });
+    },
+    onError: (error) => {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: appError.status
+          ? `Error (${appError.status})`
+          : "Generation Failed",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    },
   });
+
+  const elapsedSec = useElapsed(sketch.isPending);
+  const result = sketch.data;
+  const appError =
+    sketch.error && !errorDismissed ? toAppError(sketch.error, mode) : null;
+
+  /** Host-visible path of the produced video (Docker paths are translated). */
+  const resolvedHostPath = result
+    ? mapBackendPathToHost(result.output_path, mode, pathConfig)
+    : "";
+
+  // Resolve the asset URL once per result: the Tauri asset protocol is the only
+  // way a `<video>` can read a host path, and it is absent in a browser.
+  useEffect(() => {
+    if (!resolvedHostPath) {
+      setVideoAssetUrl("");
+      return;
+    }
+
+    let cancelled = false;
+    setVideoFailedToLoad(false);
+    convertPathToAssetUrl(resolvedHostPath).then((url) => {
+      if (!cancelled) {
+        setVideoAssetUrl(url);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [resolvedHostPath]);
 
   const handlePickImage = async () => {
     const picked = await openImageFileDialog();
     if (picked) {
       setImagePath(picked);
-      resetSingleResult();
-      clearLastError();
+      setErrorDismissed(false);
+      sketch.reset();
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!imagePath.trim() || inFlightSingle || !ready) return;
+    const trimmed = imagePath.trim();
+    if (!trimmed || sketch.isPending || !ready) {
+      return;
+    }
 
-    setVideoFailedToLoad(false);
+    setErrorDismissed(false);
 
-    const req: SketchRequest = {
-      image_path: imagePath.trim(),
-      output_dir: outputDir.trim() ? outputDir.trim() : null,
-      object_mask_path: objectMaskPath.trim() ? objectMaskPath.trim() : null,
-      hand_image_path: handImagePath.trim() ? handImagePath.trim() : null,
-      hand_mask_path: handMaskPath.trim() ? handMaskPath.trim() : null,
-      config,
-    };
+    // Stage the input where the backend can actually read it. In Docker mode
+    // the container only sees the mounted media volume, so a host file has to
+    // be copied in first — and if that copy fails the request is never sent,
+    // because it could only come back as a 404.
+    let backendImagePath = trimmed;
+    if (mode === "docker") {
+      const mapped = mapHostPathToBackend(trimmed, "docker", pathConfig);
+      backendImagePath = mapped.backendPath;
+      if (mapped.needsCopy && mapped.destinationHostPath) {
+        const copied = await copyHostFile(trimmed, mapped.destinationHostPath);
+        if (!copied) {
+          addToast({
+            type: "error",
+            title: "Could not stage the input file",
+            message: `Failed to copy ${trimmed} into the mounted media volume (${mapped.destinationHostPath}). The container would not be able to read the original location.`,
+          });
+          return;
+        }
+      }
+    }
 
-    const res = await executeSingleGeneration(req);
-    if (res?.output_path) {
-      // Resolve asset URL for the video player
-      const hostPath = mapBackendPathToHost(res.output_path, mode, pathConfig);
-      const url = await convertPathToAssetUrl(hostPath);
-      setVideoAssetUrl(url || toMediaAssetUrl(hostPath));
+    try {
+      await sketch.mutateAsync({
+        image_path: backendImagePath,
+        output_dir: outputDir.trim() ? outputDir.trim() : undefined,
+        object_mask_path: objectMaskPath.trim()
+          ? objectMaskPath.trim()
+          : undefined,
+        hand_image_path: handImagePath.trim()
+          ? handImagePath.trim()
+          : undefined,
+        hand_mask_path: handMaskPath.trim() ? handMaskPath.trim() : undefined,
+        config,
+      });
+    } catch {
+      // Surfaced through the mutation's `onError` and the error card below.
     }
   };
 
@@ -104,7 +178,7 @@ export const SingleSketchView: React.FC = () => {
     setTimeout(() => setCopiedError(false), 2500);
   };
 
-  // Preview path mapping explanation
+  // Preview of the mapping the backend will apply to the typed path.
   const pathMappingInfo = imagePath
     ? mapHostPathToBackend(imagePath, mode, pathConfig)
     : null;
@@ -148,7 +222,10 @@ export const SingleSketchView: React.FC = () => {
         {/* Main Image Selection Card */}
         <div className="p-5 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl space-y-4">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+            <label
+              htmlFor="single-image-path"
+              className="text-sm font-semibold text-zinc-200 flex items-center gap-2"
+            >
               <FileImage className="w-4 h-4 text-indigo-400" />
               Source Image File
               <span className="text-rose-400">*</span>
@@ -163,6 +240,7 @@ export const SingleSketchView: React.FC = () => {
           <div className="flex flex-col sm:flex-row gap-2.5">
             <div className="relative flex-1">
               <input
+                id="single-image-path"
                 type="text"
                 value={imagePath}
                 onChange={(e) => setImagePath(e.target.value)}
@@ -174,30 +252,11 @@ export const SingleSketchView: React.FC = () => {
             <button
               type="button"
               onClick={handlePickImage}
-              disabled={inFlightSingle}
+              disabled={sketch.isPending}
               className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
             >
               <Upload className="w-4 h-4" />
               Pick Image
-            </button>
-          </div>
-
-          {/* Quick Demo Pre-fill for Web Testing */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
-            <span className="text-zinc-500">Quick samples:</span>
-            <button
-              type="button"
-              onClick={() => setImagePath("./media/demo_portrait.png")}
-              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] transition-colors"
-            >
-              ./media/demo_portrait.png
-            </button>
-            <button
-              type="button"
-              onClick={() => setImagePath("./media/sample_landscape.jpg")}
-              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] transition-colors"
-            >
-              ./media/sample_landscape.jpg
             </button>
           </div>
 
@@ -220,7 +279,7 @@ export const SingleSketchView: React.FC = () => {
                 </div>
                 {pathMappingInfo.needsCopy && (
                   <div className="text-amber-400/90 text-[10px]">
-                    &bull; File will be automatically synced to Docker volume:{" "}
+                    &bull; The file is copied into the Docker volume on submit:{" "}
                     {pathMappingInfo.destinationHostPath}
                   </div>
                 )}
@@ -247,10 +306,10 @@ export const SingleSketchView: React.FC = () => {
         {/* Action Controls & Submit Button */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-xs text-zinc-500">
-            {inFlightSingle ? (
+            {sketch.isPending ? (
               <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
                 <Clock className="w-4 h-4" />
-                Synthesizing sketch frames... Elapsed: {singleElapsedSec}s
+                Synthesizing sketch frames... Elapsed: {elapsedSec}s
               </span>
             ) : (
               <span>Synchronous generation. May take several seconds.</span>
@@ -258,10 +317,10 @@ export const SingleSketchView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            {singleResult && (
+            {result && (
               <button
                 type="button"
-                onClick={resetSingleResult}
+                onClick={() => sketch.reset()}
                 className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
               >
                 Clear Result
@@ -270,13 +329,13 @@ export const SingleSketchView: React.FC = () => {
 
             <button
               type="submit"
-              disabled={!imagePath.trim() || inFlightSingle || !ready}
+              disabled={!imagePath.trim() || sketch.isPending || !ready}
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
             >
-              {inFlightSingle ? (
+              {sketch.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating ({singleElapsedSec}s)...
+                  Generating ({elapsedSec}s)...
                 </>
               ) : (
                 <>
@@ -289,10 +348,11 @@ export const SingleSketchView: React.FC = () => {
         </div>
       </form>
 
-      {/* Error Display Card (if 404, 422, or 500) */}
-      {lastError && (
+      {/* Error Display Card (404 / 422 / 500 / unreachable) */}
+      {appError && (
         <div
           role="alert"
+          data-testid="single-error"
           className="p-5 rounded-2xl bg-rose-500/10 border border-rose-500/20 space-y-3"
         >
           <div className="flex items-start justify-between gap-3">
@@ -300,27 +360,27 @@ export const SingleSketchView: React.FC = () => {
               <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
               <div>
                 <h4 className="text-sm font-bold text-rose-300">
-                  {lastError.status
-                    ? `Request Error ${lastError.status}`
+                  {appError.status
+                    ? `Request Error ${appError.status}`
                     : "Backend Request Failed"}
                 </h4>
                 <p className="text-xs text-rose-200/90 mt-1 leading-relaxed">
-                  {lastError.message}
+                  {appError.message}
                 </p>
               </div>
             </div>
 
             <button
               type="button"
-              onClick={clearLastError}
+              onClick={() => setErrorDismissed(true)}
               className="text-xs text-rose-400 hover:text-rose-200"
             >
               Dismiss
             </button>
           </div>
 
-          {/* 500 Verbatim Error with Copy Button */}
-          {lastError.verbatim && (
+          {/* Verbatim backend payload with copy button */}
+          {appError.verbatim && (
             <div className="pt-2 border-t border-rose-500/20">
               <div className="flex items-center justify-between text-[11px] text-rose-300/80 mb-1">
                 <span className="font-semibold font-mono">
@@ -328,7 +388,7 @@ export const SingleSketchView: React.FC = () => {
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleCopyVerbatimError(lastError.verbatim!)}
+                  onClick={() => handleCopyVerbatimError(appError.verbatim!)}
                   className="flex items-center gap-1 text-xs text-indigo-300 hover:text-white px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700"
                 >
                   <Copy className="w-3 h-3" />
@@ -336,7 +396,7 @@ export const SingleSketchView: React.FC = () => {
                 </button>
               </div>
               <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-rose-200 overflow-x-auto select-all max-h-48 border border-zinc-900">
-                {lastError.verbatim}
+                {appError.verbatim}
               </pre>
             </div>
           )}
@@ -344,27 +404,20 @@ export const SingleSketchView: React.FC = () => {
       )}
 
       {/* Generation Result & Video Preview Section */}
-      {singleResult && (
+      {result && (
         <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl space-y-5 animate-fade-in">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
               <CheckCircle2 className="w-5 h-5" />
               Sketch Video Generated Successfully
             </div>
-            {singleResult.duration_sec && (
-              <span className="text-xs text-zinc-400 font-mono">
-                Duration: {singleResult.duration_sec}s
-                {singleResult.frame_count
-                  ? ` &bull; ${singleResult.frame_count} frames`
-                  : ""}
-              </span>
-            )}
           </div>
 
           {/* Video Player or Fallback */}
           <div className="relative aspect-video max-w-2xl mx-auto rounded-xl overflow-hidden bg-black border border-zinc-800 flex items-center justify-center">
             {videoAssetUrl && !videoFailedToLoad ? (
               <video
+                data-testid="single-video"
                 src={videoAssetUrl}
                 controls
                 autoPlay
@@ -383,9 +436,8 @@ export const SingleSketchView: React.FC = () => {
                     Video generated at output path
                   </p>
                   <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                    In web preview, direct asset protocol loading (
-                    <code className="font-mono text-zinc-400">asset://</code>)
-                    may be restricted by the browser sandbox.
+                    The file is on disk. Playback needs the desktop app: a
+                    browser sandbox cannot load a local path.
                   </p>
                 </div>
               </div>
@@ -401,9 +453,7 @@ export const SingleSketchView: React.FC = () => {
               <button
                 type="button"
                 onClick={() =>
-                  handleCopyPath(
-                    singleResolvedHostPath || singleResult.output_path,
-                  )
+                  handleCopyPath(resolvedHostPath || result.output_path)
                 }
                 className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
               >
@@ -411,20 +461,21 @@ export const SingleSketchView: React.FC = () => {
                 {copiedPath ? "Copied!" : "Copy path"}
               </button>
             </div>
-            <div className="p-2.5 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-200 break-all select-all">
-              {singleResolvedHostPath || singleResult.output_path}
+            <div
+              data-testid="single-output-path"
+              className="p-2.5 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-200 break-all select-all"
+            >
+              {resolvedHostPath || result.output_path}
             </div>
 
             <div className="flex flex-wrap items-center justify-between pt-2 gap-2 text-xs">
               <span className="text-[11px] text-zinc-500 font-mono">
-                Backend output: {singleResult.output_path}
+                Backend output: {result.output_path}
               </span>
               <button
                 type="button"
                 onClick={() =>
-                  handleCopyPath(
-                    singleResolvedHostPath || singleResult.output_path,
-                  )
+                  handleCopyPath(resolvedHostPath || result.output_path)
                 }
                 className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1.5 transition-colors border border-zinc-700"
               >

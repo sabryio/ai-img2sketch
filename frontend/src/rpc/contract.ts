@@ -2,9 +2,17 @@ import { asyncIteratorObject, oc } from "@orpc/contract";
 import { openapi } from "@orpc/openapi";
 import { z } from "zod";
 
+/**
+ * The single source of truth for every payload crossing the HTTP boundary.
+ *
+ * Schemas are exported (not just inferred types) so components and forms can
+ * re-use them, and so the compile-time types below can never drift from what
+ * the server actually accepts or returns.
+ */
+
 // ===== Shared schemas =====
 
-const SketchOptionsSchema = z.object({
+export const SketchOptionsSchema = z.object({
   frame_rate: z.number().int().min(1).max(120).optional(),
   split_len: z.number().int().min(1).max(100).optional(),
   object_skip_rate: z.number().int().min(1).max(100).optional(),
@@ -13,10 +21,41 @@ const SketchOptionsSchema = z.object({
   black_pixel_threshold: z.number().int().min(0).max(255).optional(),
 });
 
-const BatchItemSchema = z.object({
+export const SketchRequestSchema = z.object({
+  image_path: z.string().min(1),
+  output_dir: z.string().min(1).optional(),
+  config: SketchOptionsSchema.optional(),
+  object_mask_path: z.string().min(1).optional(),
+  hand_image_path: z.string().min(1).optional(),
+  hand_mask_path: z.string().min(1).optional(),
+});
+
+export const BatchSketchRequestSchema = z.object({
+  input_dir: z.string().min(1),
+  output_dir: z.string().min(1).optional(),
+  config: SketchOptionsSchema.optional(),
+  object_mask_path: z.string().min(1).optional(),
+  hand_image_path: z.string().min(1).optional(),
+  hand_mask_path: z.string().min(1).optional(),
+});
+
+export const SketchResultSchema = z.object({
+  output_path: z.string(),
+});
+
+export const BatchItemSchema = z.object({
   image: z.string(),
   output_path: z.string().nullable(),
   error: z.string().nullable(),
+});
+
+export const BatchSketchResultSchema = z.object({
+  input_dir: z.string(),
+  items: z.array(BatchItemSchema),
+});
+
+export const HealthSchema = z.object({
+  status: z.literal("ok"),
 });
 
 /**
@@ -68,7 +107,7 @@ export const contract = oc.meta(openapi({ prefix: "/api/v1" })).router({
   // GET /api/v1/health
   health: oc
     .meta(openapi({ method: "GET", path: "/health" }))
-    .output(z.object({ status: z.literal("ok") })),
+    .output(HealthSchema),
 
   // POST /api/v1/sketches
   generateSketch: oc
@@ -78,17 +117,8 @@ export const contract = oc.meta(openapi({ prefix: "/api/v1" })).router({
       UNPROCESSABLE_CONTENT: {},
       INTERNAL_SERVER_ERROR: {},
     })
-    .input(
-      z.object({
-        image_path: z.string().min(1),
-        output_dir: z.string().min(1).optional(),
-        config: SketchOptionsSchema.optional(),
-        object_mask_path: z.string().min(1).optional(),
-        hand_image_path: z.string().min(1).optional(),
-        hand_mask_path: z.string().min(1).optional(),
-      }),
-    )
-    .output(z.object({ output_path: z.string() })),
+    .input(SketchRequestSchema)
+    .output(SketchResultSchema),
 
   // POST /api/v1/sketches/batch
   generateBatch: oc
@@ -98,22 +128,8 @@ export const contract = oc.meta(openapi({ prefix: "/api/v1" })).router({
       UNPROCESSABLE_CONTENT: {},
       INTERNAL_SERVER_ERROR: {},
     })
-    .input(
-      z.object({
-        input_dir: z.string().min(1),
-        output_dir: z.string().min(1).optional(),
-        config: SketchOptionsSchema.optional(),
-        object_mask_path: z.string().min(1).optional(),
-        hand_image_path: z.string().min(1).optional(),
-        hand_mask_path: z.string().min(1).optional(),
-      }),
-    )
-    .output(
-      z.object({
-        input_dir: z.string(),
-        items: z.array(BatchItemSchema),
-      }),
-    ),
+    .input(BatchSketchRequestSchema)
+    .output(BatchSketchResultSchema),
 
   // GET /api/v1/events — Server-Sent Events decoded as an async iterator.
   // `asyncIteratorObject` is what makes the client return a typed stream
@@ -126,6 +142,12 @@ export const contract = oc.meta(openapi({ prefix: "/api/v1" })).router({
 
 // ===== Type exports =====
 
+export type Health = z.infer<typeof HealthSchema>;
 export type SketchOptions = z.infer<typeof SketchOptionsSchema>;
+export type SketchRequest = z.infer<typeof SketchRequestSchema>;
+export type BatchSketchRequest = z.infer<typeof BatchSketchRequestSchema>;
+export type SketchResult = z.infer<typeof SketchResultSchema>;
 export type BatchItem = z.infer<typeof BatchItemSchema>;
+export type BatchSketchResult = z.infer<typeof BatchSketchResultSchema>;
 export type EventData = z.infer<typeof EventDataSchema>;
+export type EventName = EventData["event"];

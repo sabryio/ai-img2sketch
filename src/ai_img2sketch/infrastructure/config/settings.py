@@ -10,9 +10,11 @@ from __future__ import annotations
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-#: Origins the Tauri webview uses when talking to this service.
+#: Origins the Tauri webview and the Vite dev server use to reach this service.
 _DEFAULT_CORS_ORIGINS: tuple[str, ...] = (
     "http://localhost:1420",  # Tauri dev server (Vite default port)
+    "http://localhost:3000",  # frontend/ dev server (`bun run dev`)
+    "http://127.0.0.1:3000",  # same, reached over the loopback alias
     "http://tauri.localhost",  # Tauri webview on Windows/Linux
     "tauri://localhost",  # Tauri webview on macOS
 )

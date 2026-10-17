@@ -1,11 +1,8 @@
 import React, { useState } from "react";
 import {
-  AlertCircle,
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Copy,
-  ExternalLink,
   Film,
   Folder,
   FolderOpen,
@@ -13,50 +10,84 @@ import {
   Layers,
   Loader2,
   Play,
-  RotateCcw,
-  Sparkles,
   XCircle,
 } from "lucide-react";
-import {
-  BatchItemResult,
-  BatchSketchRequest,
-  SketchConfig,
-} from "../lib/api/types";
+import { useElapsed, useGenerateBatch } from "../hooks";
+import type { BatchItem, SketchOptions } from "../rpc/contract";
+import { toAppError } from "../lib/errors";
 import { mapBackendPathToHost, mapHostPathToBackend } from "../lib/paths";
 import { convertPathToAssetUrl, openDirectoryDialog } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
-import { useGenerationStore } from "../stores/generation";
+import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
 
-export const BatchSketchView: React.FC = () => {
-  const { mode, pathConfig, ready } = useBackendStore();
-  const {
-    inFlightBatch,
-    batchElapsedSec,
-    batchResult,
-    batchSummary,
-    lastError,
-    executeBatchGeneration,
-    resetBatchResult,
-    clearLastError,
-  } = useGenerationStore();
+interface BatchSketchViewProps {
+  /** False once the backend stops answering; the form is then disabled. */
+  ready: boolean;
+}
+
+/** Form defaults, matching the engine's documented defaults. */
+const DEFAULT_CONFIG: SketchOptions = {
+  frame_rate: 25,
+  split_len: 10,
+  object_skip_rate: 8,
+  end_duration_sec: 2,
+  black_pixel_threshold: 10,
+};
+
+interface BatchSummary {
+  succeeded: number;
+  failed: number;
+  total: number;
+}
+
+/** The run summary is derived from the per-image results, so it can never disagree with the table. */
+function summarize(items: BatchItem[]): BatchSummary {
+  const succeeded = items.filter((item) => !item.error).length;
+  return { succeeded, failed: items.length - succeeded, total: items.length };
+}
+
+export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
+  const { mode, pathConfig } = useBackendStore();
+  const addToast = useNotificationsStore((state) => state.addToast);
 
   const [inputDir, setInputDir] = useState<string>("");
   const [outputDir, setOutputDir] = useState<string>("");
+  const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
+  const [errorDismissed, setErrorDismissed] = useState(false);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{
     image: string;
     path: string;
     assetUrl: string;
   } | null>(null);
 
-  const [config, setConfig] = useState<SketchConfig>({
-    frame_rate: 25,
-    split_len: 10,
-    object_skip_rate: 8,
-    draw_duration_sec: null,
-    end_duration_sec: 2,
-    black_pixel_threshold: 10,
+  const batch = useGenerateBatch({
+    onSuccess: (data) => {
+      const summary = summarize(data.items);
+      addToast({
+        type: summary.failed > 0 ? "warning" : "success",
+        title: "Batch Completed",
+        message: `Processed ${summary.total} files: ${summary.succeeded} succeeded, ${summary.failed} failed.`,
+      });
+    },
+    onError: (error) => {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: appError.status
+          ? `Batch Error (${appError.status})`
+          : "Batch Generation Failed",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    },
   });
+
+  const elapsedSec = useElapsed(batch.isPending);
+  const result = batch.data;
+  const summary = result ? summarize(result.items) : null;
+  const appError =
+    batch.error && !errorDismissed ? toAppError(batch.error, mode) : null;
 
   const handlePickInputDir = async () => {
     const picked = await openDirectoryDialog(
@@ -64,31 +95,45 @@ export const BatchSketchView: React.FC = () => {
     );
     if (picked) {
       setInputDir(picked);
-      resetBatchResult();
-      clearLastError();
+      setErrorDismissed(false);
+      batch.reset();
     }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputDir.trim() || inFlightBatch || !ready) return;
+    const trimmed = inputDir.trim();
+    if (!trimmed || batch.isPending || !ready) {
+      return;
+    }
 
-    const req: BatchSketchRequest = {
-      input_dir: inputDir.trim(),
-      output_dir: outputDir.trim() ? outputDir.trim() : null,
-      config,
-    };
+    setErrorDismissed(false);
 
-    await executeBatchGeneration(req);
+    // Docker mode: the container only sees the mounted media volume.
+    const backendInputDir =
+      mode === "docker"
+        ? mapHostPathToBackend(trimmed, "docker", pathConfig).backendPath
+        : trimmed;
+
+    try {
+      await batch.mutateAsync({
+        input_dir: backendInputDir,
+        output_dir: outputDir.trim() ? outputDir.trim() : undefined,
+        config,
+      });
+    } catch {
+      // Surfaced through the mutation's `onError` and the error banner below.
+    }
   };
 
-  const handlePreviewItem = async (item: BatchItemResult) => {
+  const handlePreviewItem = async (item: BatchItem) => {
     if (!item.output_path) return;
-    const url = await convertPathToAssetUrl(item.output_path);
+    const hostPath = mapBackendPathToHost(item.output_path, mode, pathConfig);
+    const url = await convertPathToAssetUrl(hostPath);
     setSelectedPreviewVideo({
       image: item.image,
-      path: item.output_path,
-      assetUrl: url || item.output_path,
+      path: hostPath,
+      assetUrl: url,
     });
   };
 
@@ -129,7 +174,10 @@ export const BatchSketchView: React.FC = () => {
         {/* Input Directory Selection Card */}
         <div className="p-5 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl space-y-4">
           <div className="flex items-center justify-between">
-            <label className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
+            <label
+              htmlFor="batch-input-dir"
+              className="text-sm font-semibold text-zinc-200 flex items-center gap-2"
+            >
               <Folder className="w-4 h-4 text-indigo-400" />
               Input Images Directory
               <span className="text-rose-400">*</span>
@@ -143,6 +191,7 @@ export const BatchSketchView: React.FC = () => {
 
           <div className="flex flex-col sm:flex-row gap-2.5">
             <input
+              id="batch-input-dir"
               type="text"
               value={inputDir}
               onChange={(e) => setInputDir(e.target.value)}
@@ -153,23 +202,11 @@ export const BatchSketchView: React.FC = () => {
             <button
               type="button"
               onClick={handlePickInputDir}
-              disabled={inFlightBatch}
+              disabled={batch.isPending}
               className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
             >
               <FolderOpen className="w-4 h-4" />
               Select Folder
-            </button>
-          </div>
-
-          {/* Quick Demo Pre-fill for Web Testing */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]">
-            <span className="text-zinc-500">Quick batch samples:</span>
-            <button
-              type="button"
-              onClick={() => setInputDir("./media/sample_batch")}
-              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-mono text-[10px] transition-colors"
-            >
-              ./media/sample_batch
             </button>
           </div>
 
@@ -202,10 +239,10 @@ export const BatchSketchView: React.FC = () => {
         {/* Action Controls & Submit Button */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="text-xs text-zinc-500">
-            {inFlightBatch ? (
+            {batch.isPending ? (
               <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
                 <Clock className="w-4 h-4" />
-                Processing batch images... Elapsed: {batchElapsedSec}s
+                Processing batch images... Elapsed: {elapsedSec}s
               </span>
             ) : (
               <span>
@@ -216,10 +253,10 @@ export const BatchSketchView: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">
-            {batchResult && (
+            {result && (
               <button
                 type="button"
-                onClick={resetBatchResult}
+                onClick={() => batch.reset()}
                 className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
               >
                 Clear Table
@@ -228,13 +265,13 @@ export const BatchSketchView: React.FC = () => {
 
             <button
               type="submit"
-              disabled={!inputDir.trim() || inFlightBatch || !ready}
+              disabled={!inputDir.trim() || batch.isPending || !ready}
               className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
             >
-              {inFlightBatch ? (
+              {batch.isPending ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  Processing Batch ({batchElapsedSec}s)...
+                  Processing Batch ({elapsedSec}s)...
                 </>
               ) : (
                 <>
@@ -248,9 +285,10 @@ export const BatchSketchView: React.FC = () => {
       </form>
 
       {/* Error banner */}
-      {lastError && (
+      {appError && (
         <div
           role="alert"
+          data-testid="batch-error"
           className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start justify-between gap-3"
         >
           <div className="flex items-start gap-3">
@@ -259,12 +297,12 @@ export const BatchSketchView: React.FC = () => {
               <h4 className="text-sm font-bold text-rose-300">
                 Batch Processing Error
               </h4>
-              <p className="text-xs text-rose-200 mt-1">{lastError.message}</p>
+              <p className="text-xs text-rose-200 mt-1">{appError.message}</p>
             </div>
           </div>
           <button
             type="button"
-            onClick={clearLastError}
+            onClick={() => setErrorDismissed(true)}
             className="text-xs text-rose-400 hover:text-rose-200"
           >
             Dismiss
@@ -273,9 +311,9 @@ export const BatchSketchView: React.FC = () => {
       )}
 
       {/* Batch Results Table & Summary */}
-      {batchResult && (
+      {result && summary && (
         <div className="rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl overflow-hidden space-y-4 p-5 animate-fade-in">
-          {/* Summary Line from batch.completed payload */}
+          {/* Summary derived from the per-image results */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800/80">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
@@ -286,26 +324,27 @@ export const BatchSketchView: React.FC = () => {
                   Batch Run Complete
                 </h3>
                 <p className="text-xs text-zinc-400 font-mono">
-                  Input folder: {inputDir}
+                  Input folder: {result.input_dir}
                 </p>
               </div>
             </div>
 
-            {batchSummary && (
-              <div className="flex items-center gap-3 text-xs font-medium">
-                <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  {batchSummary.succeeded} Succeeded
+            <div
+              data-testid="batch-summary"
+              className="flex items-center gap-3 text-xs font-medium"
+            >
+              <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                {summary.succeeded} Succeeded
+              </span>
+              {summary.failed > 0 && (
+                <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  {summary.failed} Failed
                 </span>
-                {batchSummary.failed > 0 && (
-                  <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                    {batchSummary.failed} Failed
-                  </span>
-                )}
-                <span className="px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
-                  Total: {batchSummary.total}
-                </span>
-              </div>
-            )}
+              )}
+              <span className="px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
+                Total: {summary.total}
+              </span>
+            </div>
           </div>
 
           {/* Items Table */}
@@ -320,12 +359,16 @@ export const BatchSketchView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/80 font-mono">
-                {batchResult.items.map((item, idx) => {
+                {result.items.map((item, idx) => {
                   const hasError = Boolean(item.error);
+                  const hostPath = item.output_path
+                    ? mapBackendPathToHost(item.output_path, mode, pathConfig)
+                    : "";
 
                   return (
                     <tr
-                      key={idx}
+                      key={`${item.image}-${idx}`}
+                      data-testid="batch-row"
                       className={`transition-colors ${
                         hasError
                           ? "bg-rose-500/5 hover:bg-rose-500/10"
@@ -360,7 +403,7 @@ export const BatchSketchView: React.FC = () => {
                           </span>
                         ) : (
                           <span className="text-zinc-400 text-[11px]">
-                            {item.output_path || "—"}
+                            {hostPath || "—"}
                           </span>
                         )}
                       </td>

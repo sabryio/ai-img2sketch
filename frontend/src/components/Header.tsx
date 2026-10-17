@@ -1,9 +1,6 @@
 import React from "react";
 import {
-  Activity,
   Box,
-  CheckCircle2,
-  FolderSync,
   Layers,
   Radio,
   RefreshCw,
@@ -12,31 +9,34 @@ import {
   Sparkles,
   Zap,
 } from "lucide-react";
+import { useHealth } from "../hooks";
+import type { SseState } from "../hooks";
 import { useBackendStore } from "../stores/backend";
-import { useGenerationStore } from "../stores/generation";
 
 interface HeaderProps {
   activeTab: "single" | "batch";
   onTabChange: (tab: "single" | "batch") => void;
   onOpenSettings: () => void;
+  /** Stream state owned by `App` (it holds the single SSE connection). */
+  sseState: SseState;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   onTabChange,
   onOpenSettings,
+  sseState,
 }) => {
-  const {
-    health,
-    ready,
-    mode,
-    setMode,
-    dockerRunning,
-    simulatorActive,
-    checkHealthOnce,
-  } = useBackendStore();
+  const { mode, setMode } = useBackendStore();
 
-  const { sseState } = useGenerationStore();
+  // Shares the query `App` already runs: same cache entry, same polling.
+  const health = useHealth();
+  const ready = health.data?.status === "ok";
+  const healthLabel = ready
+    ? "ok"
+    : health.status === "pending"
+      ? "starting"
+      : "down";
 
   const getSseBadge = () => {
     switch (sseState) {
@@ -140,11 +140,11 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Backend Health Badge */}
             <button
               type="button"
-              onClick={() => checkHealthOnce()}
+              onClick={() => health.refetch()}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                 ready
                   ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                  : health === "starting"
+                  : health.status === "pending"
                     ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
                     : "bg-rose-500/10 text-rose-400 border-rose-500/20"
               }`}
@@ -156,7 +156,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               />
               <span className="hidden sm:inline">Backend:</span>
-              <span className="font-semibold capitalize">{health}</span>
+              <span className="font-semibold capitalize">{healthLabel}</span>
             </button>
 
             {/* SSE Badge */}
@@ -191,13 +191,6 @@ export const Header: React.FC<HeaderProps> = ({
                 Sidecar
               </button>
             </div>
-
-            {/* Simulator Indicator if active */}
-            {simulatorActive && (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-950 text-indigo-300 border border-indigo-700">
-                Demo Sim
-              </span>
-            )}
 
             {/* Settings Button */}
             <button

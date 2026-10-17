@@ -6,21 +6,29 @@ type HealthOverrides = QueryOverrides<
   Parameters<typeof orpc.health.queryOptions>[0]
 >;
 
+/** Poll cadence while the backend is unreachable: the gate is on screen. */
+const DOWN_POLL_MS = 2_000;
+
+/** Poll cadence once the backend is up: just enough to notice it going away. */
+const UP_POLL_MS = 10_000;
+
 /**
  * Backend liveness — `GET /api/v1/health`.
  *
- * Polls every 10 s so the startup gate and the header badge track the backend
- * without a manual refresh. Standard query options may be passed to override
- * the default (e.g. `{ refetchInterval: false }`).
+ * Polls itself, fast while the backend is down (so the gate clears as soon as
+ * it comes up) and slowly while it is up. Standard query options may be passed
+ * to override any of that.
  *
  * @example
- * const { data, isPending, error, refetch } = useHealth();
- * if (data) return <span>{data.status}</span>;
+ * const { data, status, error, refetch } = useHealth();
+ * const ready = data?.status === "ok";
  */
 export function useHealth(options?: HealthOverrides) {
   return useQuery(
     orpc.health.queryOptions({
-      refetchInterval: 10_000,
+      retry: false,
+      refetchInterval: (query) =>
+        query.state.status === "success" ? UP_POLL_MS : DOWN_POLL_MS,
       ...options,
     }),
   );

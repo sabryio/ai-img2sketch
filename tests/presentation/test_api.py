@@ -265,3 +265,12 @@ def test_default_origins_cover_the_tauri_webview() -> None:
 
     assert "tauri://localhost" in settings.cors_origins
     assert "http://tauri.localhost" in settings.cors_origins
+
+
+def test_default_origins_cover_the_frontend_dev_server() -> None:
+    settings = ApiSettings()
+
+    # ``frontend/`` serves on 3000 (`bun run dev`), so a browser hits this API
+    # cross-origin from there; without these the dev server cannot reach it.
+    assert "http://localhost:3000" in settings.cors_origins
+    assert "http://127.0.0.1:3000" in settings.cors_origins
