@@ -289,6 +289,35 @@ A ready-to-use example lives at `images/example-object-masks.json`:
 task generate:objects
 ```
 
+## Web API (FastAPI)
+
+The same use cases are exposed over HTTP with a Server-Sent-Events stream:
+
+```bash
+# With Docker (binds localhost:8000, health check included)
+docker compose up -d
+
+# Or locally without Docker
+uv run img2sketch-api
+```
+
+```bash
+# Health probe
+curl http://localhost:8000/api/v1/health
+
+# Generate one sketch video
+curl -X POST http://localhost:8000/api/v1/sketches \
+  -H "Content-Type: application/json" \
+  -d '{"image_path": "/app/media/photo.jpg", "output_dir": "/app/output"}'
+
+# Stream lifecycle events (initial ack -> id'd event frames -> close)
+curl -N http://localhost:8000/api/v1/events
+```
+
+See `docs/tauri-integration.md` for the full endpoint list, SSE protocol,
+environment variables (`APP_HOST`, `APP_PORT`, `APP_CORS_ORIGINS`), and how a
+Tauri frontend starts and reaches the Dockerized backend.
+
 ## Project Structure
 
 This project follows **Clean Architecture** principles with clear separation of concerns:
@@ -332,9 +361,22 @@ ai-img2sketch/
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
 │   │       └── video_writer.py           # OpenCVVideoWriter
-│   ├── presentation/              # Presentation layer (CLI)
+│   │   ├── events/
+│   │   │   └── async_event_bus.py        # In-process pub/sub backing SSE
+│   │   ├── config/
+│   │   │   └── settings.py        # ApiSettings (APP_* environment variables)
+│   │   └── tauri/
+│   │       └── backend_client.py         # Docker start/stop/health helpers
+│   ├── presentation/              # Presentation layer (CLI + HTTP API)
 │   │   ├── cli.py                # Click CLI interface
-│   │   └── composition.py        # Composition root (wires everything)
+│   │   ├── bundled.py            # Bundled hand assets resolver
+│   │   ├── composition.py        # Composition root (wires everything)
+│   │   └── api/                  # FastAPI interface adapter (REST + SSE)
+│   │       ├── app.py            # create_app() factory + module-level app
+│   │       ├── settings.py       # ApiSettings re-export
+│   │       ├── schemas.py        # Request/response DTOs
+│   │       ├── __main__.py       # img2sketch-api console entry point
+│   │       └── routers/          # health.py, sketches.py, events.py (SSE)
 │   └── resources/                 # Bundled package data
 │       └── images/                # Default hand image + mask (shipped in the wheel)
 │           ├── drawing-hand.png
@@ -359,7 +401,7 @@ directory. The root `images/` folder holds example and test assets only.
 1. **Domain Layer**: Pure business logic with no external dependencies
 2. **Application Layer**: Use cases orchestrating domain entities
 3. **Infrastructure Layer**: Concrete implementations of services
-4. **Presentation Layer**: CLI interface for user interaction
+4. **Presentation Layer**: CLI and FastAPI HTTP/SSE interfaces for user interaction
 
 ## Development
 

@@ -1,0 +1,34 @@
+# VCS and caches
+.git
+.gitignore
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Environments
+.venv
+env
+venv
+
+# Non-runtime artifacts
+tests
+scripts
+docs
+images
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Local output/media
+*.exe
+*.mp4
+*.wav
+*.mp3
+data
+output
+
+# Docs (README.md stays — the wheel build reads it)
+*.md
+!README.md

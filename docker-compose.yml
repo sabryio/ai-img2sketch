@@ -1,0 +1,33 @@
+# Single service today: sketch generation is CPU-bound and the event bus is
+# in-process, so more workers would split the SSE fan-out. Scale by running
+# additional stacks behind a load balancer instead.
+services:
+  api:
+    build: .
+    image: ai-img2sketch-api
+    container_name: ai-img2sketch-api
+    # Bound to localhost only — the Tauri webview runs on the same machine.
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      APP_LOG_LEVEL: info
+      APP_CORS_ORIGINS: >
+        ["http://localhost:1420", "http://tauri.localhost", "tauri://localhost"]
+    volumes:
+      # Client files for the API (paths passed in requests must live here).
+      - ./media:/app/media
+      # Generated videos land in /app/output when output_dir=/app/output.
+      - ./output:/app/output
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

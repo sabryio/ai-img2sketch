@@ -3,7 +3,6 @@
 import logging
 import sys
 from contextlib import suppress
-from importlib import resources as importlib_resources
 from pathlib import Path
 
 import click
@@ -15,6 +14,7 @@ from ..application.services.dimension_adjuster import DimensionAdjuster
 from ..application.services.video_path_resolver import VideoPathResolver
 from ..application.use_cases.generate_batch_videos import BatchSummary
 from ..domain.value_objects.video_config import VideoConfig
+from .bundled import bundled_hand_paths
 from .composition import (
     build_generate_sketch_video_use_case,
     build_generate_videos_from_directory_use_case,
@@ -133,8 +133,9 @@ def generate(
     try:
         _print_banner()
 
-        hand_image = hand_image or _bundled_image("drawing-hand.png")
-        hand_mask = hand_mask or _bundled_image("hand-mask.png")
+        hand_paths = bundled_hand_paths()
+        hand_image = hand_image or hand_paths.image
+        hand_mask = hand_mask or hand_paths.mask
         _require_hand_files(hand_image, hand_mask)
 
         config = VideoConfig(
@@ -225,11 +226,6 @@ def _print_banner() -> None:
             border_style="cyan",
         )
     )
-
-
-def _bundled_image(name: str) -> Path:
-    """Return the path to an image bundled inside the package."""
-    return Path(str(importlib_resources.files("ai_img2sketch.resources.images"))) / name
 
 
 def _require_hand_files(hand_image: Path, hand_mask: Path) -> None:

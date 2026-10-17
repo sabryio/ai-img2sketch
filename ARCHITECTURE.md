@@ -101,12 +101,32 @@ or the filesystem lives here.
 - **JsonObjectMaskLoader** implements `ObjectMaskLoader`
 - **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
   implements `VideoWriterFactory`
+- **AsyncEventBus** (in `events/`) implements `EventPublisher` (write side) and
+  `EventStream` (read side) — the in-process bus backing the SSE transport
+- **`config/`**: `ApiSettings`, loaded from `APP_*` environment variables
+  (host, port, log level, CORS origins)
+- **`tauri/backend_client.py`**: helpers that let a Tauri shell start/stop the
+  Dockerized backend and probe its health endpoint (see
+  `docs/tauri-integration.md`)
 
 ### 4. Presentation Layer (`src/ai_img2sketch/presentation/`)
 
 - **cli.py**: the Click/Rich command-line interface (`generate`, `info`)
+- **bundled.py**: resolves the hand image/mask bundled inside the package;
+  shared by the CLI and the API
 - **composition.py**: the **composition root** — the single place that
-  constructs concrete adapters and injects them into the use case
+  constructs concrete adapters and injects them into the use cases
+- **api/**: a second interface adapter — the FastAPI web layer:
+  - `app.py` — `create_app()` factory (CORS from `ApiSettings`, lifespan that
+    pushes a terminal `close` event on shutdown) plus a module-level `app` for
+    `uvicorn ai_img2sketch.presentation.api.app:app`
+  - `routers/` — `create_health_router()`, `create_sketches_router()` and
+    `create_events_router()`, each built by a factory injecting dependencies,
+    mounted under `/api/v1`
+  - `schemas.py` — request/response DTOs translated into domain value objects
+  - SSE frames follow the lifecycle *initial ack → `event`/`id`/`data`
+    messages → keep-alive comments → terminal `close` event*
+  - `__main__.py` — the `img2sketch-api` console script runner
 
 ## Design Patterns
 
@@ -160,6 +180,13 @@ Video output
 GenerateVideosFromDirectoryUseCase  (folder)
     ↓ uses ImageDirectoryScanner + ImageLoader
     ↓ delegates each image to the single generator via the SketchVideoGenerator port
+
+FastAPI (HTTP interface adapters)
+    POST /api/v1/sketches      → parses DTO → VideoConfig → use case (in a worker thread)
+                                 → publishes sketch.* events through EventPublisher
+    POST /api/v1/sketches/batch → BatchSummary → BatchSketchResult
+    GET  /api/v1/events        → EventStream.subscribe() → SSE frames
+    (parallel transport, same use cases — no business logic in the HTTP layer)
 ```
 
 ## Type Safety
@@ -178,7 +205,11 @@ Tests live in `tests/` and run with `uv run pytest` (or `task test`):
 2. **Service tests** — dimension rounding, grid splitting, drawing order, overlay
 3. **Use-case tests** — drive `GenerateSketchVideoUseCase` entirely with
    in-memory fakes implementing the ports (no OpenCV, no filesystem)
-4. **CLI tests** — invoke commands with Click's `CliRunner` against a real image
+4. **Infrastructure tests** — event bus pub/sub, keep-alives, port conformance
+5. **CLI tests** — invoke commands with Click's `CliRunner` against a real image
+6. **Web API tests** — FastAPI `TestClient` for REST/CORS; the SSE lifecycle is
+   exercised against a real uvicorn server with `httpx.AsyncClient` streaming
+   (TestClient's ASGI transport cannot stream)
 
 ## Benefits
 
@@ -195,5 +226,6 @@ Ideas that fit the current architecture:
 1. **Multiple hand styles**: an alternate `HandOverlayService` implementation
 2. **Extra output formats**: a second `VideoWriter` adapter
 3. **Recursive batch scanning**: a `recursive` option on the scanner adapter
-4. **Web API**: a FastAPI presentation layer reusing the same use cases
-5. **Progress reporting**: a `ProgressReporter` port injected into the use case
+4. **Progress reporting**: a `ProgressReporter` port injected into the use
+   case, so per-frame progress reaches the SSE stream (today the HTTP layer
+   publishes lifecycle events only)
