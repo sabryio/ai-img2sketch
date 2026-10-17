@@ -314,9 +314,12 @@ curl -X POST http://localhost:8000/api/v1/sketches \
 curl -N http://localhost:8000/api/v1/events
 ```
 
-See `docs/tauri-integration.md` for the full endpoint list, SSE protocol,
-environment variables (`APP_HOST`, `APP_PORT`, `APP_CORS_ORIGINS`), and how a
-Tauri frontend starts and reaches the Dockerized backend.
+- `docs/api.md` — complete API reference for humans and agents: schemas,
+  ranges, SSE protocol, error mapping, concurrency notes.
+- `docs/tauri-integration.md` — start/locate/communicate guide for the Tauri
+  shell (sidecar vs Docker, lifecycle, volumes, env vars).
+- `docs/frontend-ai-prompt.md` — a ready-to-paste prompt for an AI coding
+  agent to generate the Tauri frontend against the API.
 
 ## Project Structure
 
