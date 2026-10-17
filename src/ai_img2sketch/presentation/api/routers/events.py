@@ -1,23 +1,17 @@
 """Server-Sent Events router.
 
-The stream follows the classic lifecycle the client can rely on:
+Thin adapter: subscribes to the application event bus and feeds each domain
+event through :class:`~ai_img2sketch.infrastructure.sse.ORPCSseStream` so the
+wire format is always oRPC-compatible (``asyncIteratorObject`` on the client).
 
-1. **Initial frames** — a `retry:` reconnect hint followed by an (unnamed)
-   comment ack, sent the moment the connection opens.
-2. **Message events** — every bus event as ``event: <name>`` + ``id: <n>``
-   + ``data: <json>``; ``ping`` events become anonymous keep-alive comments
-   during silence.
-3. **Close event** — a terminal ``event: close`` frame when the bus shuts
-   down, then the stream ends.
-
-Event names and payloads mirror the JSON errors of the request/response
-endpoints (see :mod:`.sketches`).
+The domain event name is injected as the ``"event"`` discriminant key inside
+the JSON payload, matching the Zod ``discriminatedUnion("event", [...])``
+schema on the frontend contract.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -25,53 +19,31 @@ from fastapi.responses import StreamingResponse
 from ....application.ports.event_publisher import (
     CLOSE_EVENT,
     KEEPALIVE_EVENT,
-    DomainEvent,
     EventStream,
 )
-
-#: Reconnect hint sent to the client (``retry:`` line) at stream start.
-_RECONNECT_SECONDS = 5
-
-#: hop-by-hop headers must stay out; these two stop buffering everywhere.
-_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+from ....infrastructure.sse import ORPCSseStream
+from ....infrastructure.sse.stream import SseItem
 
 
-def initial_frames() -> str:
-    """Warming frames sent before any application event."""
-    return f"retry: {_RECONNECT_SECONDS * 1000}\n\n: connected\n\n"
+async def _bus_to_generator(
+    event_stream: EventStream,
+) -> AsyncGenerator[SseItem, None]:
+    """Translate bus events into plain dicts for :class:`ORPCSseStream`.
 
-
-def message_frame(event: DomainEvent, sequence: int) -> str:
-    """Format one application event as an ``event``/``id``/``data`` frame."""
-    payload = json.dumps(event.data, ensure_ascii=False)
-    return f"event: {event.event}\nid: {sequence}\ndata: {payload}\n\n"
-
-
-def close_frame() -> str:
-    """Terminal frame marking the end of the stream."""
-    return "event: close\ndata: \n\n"
-
-
-def _sse_frames(event_stream: EventStream) -> AsyncIterator[str]:
-    """Stream bus events as SSE frames until a ``close`` event arrives."""
-
-    async def generator() -> AsyncIterator[str]:
-        # Attach to the bus BEFORE the first frame goes out so events published
-        # between connection and subscription can never be missed.
-        events = event_stream.subscribe()
-        yield initial_frames()
-        sequence = 0
-        async for event in events:
-            if event.event == CLOSE_EVENT:
-                yield close_frame()
-                return
-            if event.event == KEEPALIVE_EVENT:
-                yield ": keep-alive\n\n"
-                continue
-            yield message_frame(event, sequence)
-            sequence += 1
-
-    return generator()
+    - ``KEEPALIVE_EVENT`` → skipped (``ORPCSseStream`` handles keep-alives via
+      its own comment frames; the bus ping is not forwarded to clients).
+    - ``CLOSE_EVENT``     → yields ``ORPCSseStream.done()`` to emit the
+      terminal ``event: close`` frame and stop the stream.
+    - Everything else    → yields ``{"event": <name>, **data}`` so the
+      frontend ``discriminatedUnion`` can dispatch on the ``"event"`` key.
+    """
+    async for event in event_stream.subscribe():
+        if event.event == KEEPALIVE_EVENT:
+            continue
+        if event.event == CLOSE_EVENT:
+            yield ORPCSseStream.done()
+            return
+        yield {"event": event.event, **event.data}
 
 
 def create_events_router(event_stream: EventStream) -> APIRouter:
@@ -84,10 +56,6 @@ def create_events_router(event_stream: EventStream) -> APIRouter:
     )
     async def stream_events() -> StreamingResponse:
         """Keep a connection open and push every bus event to the client."""
-        return StreamingResponse(
-            _sse_frames(event_stream),
-            media_type="text/event-stream",
-            headers=_SSE_HEADERS,
-        )
+        return ORPCSseStream(_bus_to_generator(event_stream)).to_response()
 
     return router
