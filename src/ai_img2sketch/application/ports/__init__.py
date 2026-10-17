@@ -2,6 +2,7 @@
 
 from .event_publisher import (
     CLOSE_EVENT,
+    EVENT_KEY,
     KEEPALIVE_EVENT,
     DomainEvent,
     EventPublisher,
@@ -17,6 +18,7 @@ from .video_writer import VideoWriter, VideoWriterFactory
 
 __all__ = [
     "CLOSE_EVENT",
+    "EVENT_KEY",
     "KEEPALIVE_EVENT",
     "DomainEvent",
     "EventPublisher",

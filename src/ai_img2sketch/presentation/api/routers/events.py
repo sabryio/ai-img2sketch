@@ -18,11 +18,23 @@ from fastapi.responses import StreamingResponse
 
 from ....application.ports.event_publisher import (
     CLOSE_EVENT,
+    EVENT_KEY,
     KEEPALIVE_EVENT,
+    DomainEvent,
     EventStream,
 )
 from ....infrastructure.sse import ORPCSseStream
 from ....infrastructure.sse.stream import SseItem
+
+
+def _payload(event: DomainEvent) -> dict[str, object]:
+    """Event name first (documented wire shape), and authoritative.
+
+    A payload field that happens to be named ``"event"`` is dropped rather than
+    allowed to clobber the discriminant — clients dispatch on it.
+    """
+    extras = {key: value for key, value in event.data.items() if key != EVENT_KEY}
+    return {EVENT_KEY: event.event, **extras}
 
 
 async def _bus_to_generator(
@@ -34,8 +46,8 @@ async def _bus_to_generator(
       its own comment frames; the bus ping is not forwarded to clients).
     - ``CLOSE_EVENT``     → yields ``ORPCSseStream.done()`` to emit the
       terminal ``event: close`` frame and stop the stream.
-    - Everything else    → yields ``{"event": <name>, **data}`` so the
-      frontend ``discriminatedUnion`` can dispatch on the ``"event"`` key.
+    - Everything else    → yields ``_payload(event)`` so the frontend
+      ``discriminatedUnion`` can dispatch on ``EVENT_KEY``.
     """
     async for event in event_stream.subscribe():
         if event.event == KEEPALIVE_EVENT:
@@ -43,7 +55,7 @@ async def _bus_to_generator(
         if event.event == CLOSE_EVENT:
             yield ORPCSseStream.done()
             return
-        yield {"event": event.event, **event.data}
+        yield _payload(event)
 
 
 def create_events_router(event_stream: EventStream) -> APIRouter:

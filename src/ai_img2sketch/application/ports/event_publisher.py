@@ -21,6 +21,15 @@ KEEPALIVE_EVENT = "ping"
 #: Transports must stop iterating once it arrives.
 CLOSE_EVENT = "close"
 
+#: JSON key under which the event name is carried in serialised payloads.
+#: Transports that cannot use a per-type channel (e.g. the oRPC-compatible SSE
+#: stream, where every application event arrives as the default ``message``
+#: type) put :attr:`DomainEvent.event` here so clients can dispatch with a
+#: discriminated union — mirroring the frontend's ``discriminatedUnion("event",
+#: [...])`` schema. The domain event name is authoritative: a payload field of
+#: the same name never wins.
+EVENT_KEY = "event"
+
 
 @dataclass(frozen=True)
 class DomainEvent:
