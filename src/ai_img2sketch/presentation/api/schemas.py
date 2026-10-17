@@ -19,7 +19,7 @@ class HealthResponse(BaseModel):
 
 
 class SketchOptions(BaseModel):
-    """Optional generation settings; mirrors the CLI flags, nothing more."""
+    """Optional generation settings; every domain knob is settable here."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -28,10 +28,15 @@ class SketchOptions(BaseModel):
     object_skip_rate: int | None = Field(default=None, ge=1, le=100)
     draw_duration_sec: float | None = Field(default=None, ge=0.1, le=600.0)
     end_duration_sec: int | None = Field(default=None, ge=0, le=10)
+    black_pixel_threshold: int | None = Field(default=None, ge=0, le=255)
 
 
 class SketchRequest(BaseModel):
-    """Payload of ``POST /api/v1/sketches``."""
+    """Payload of ``POST /api/v1/sketches``.
+
+    ``hand_image_path`` / ``hand_mask_path`` optionally point at custom
+    drawing-hand assets; when omitted the bundled assets are used.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -39,10 +44,12 @@ class SketchRequest(BaseModel):
     output_dir: str | None = Field(default=None, min_length=1)
     config: SketchOptions = Field(default_factory=SketchOptions)
     object_mask_path: str | None = Field(default=None, min_length=1)
+    hand_image_path: str | None = Field(default=None, min_length=1)
+    hand_mask_path: str | None = Field(default=None, min_length=1)
 
 
 class BatchSketchRequest(BaseModel):
-    """Payload of ``POST /api/v1/sketches/batch``."""
+    """Payload of ``POST /api/v1/sketches/batch`` (same options, per directory)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -50,6 +57,8 @@ class BatchSketchRequest(BaseModel):
     output_dir: str | None = Field(default=None, min_length=1)
     config: SketchOptions = Field(default_factory=SketchOptions)
     object_mask_path: str | None = Field(default=None, min_length=1)
+    hand_image_path: str | None = Field(default=None, min_length=1)
+    hand_mask_path: str | None = Field(default=None, min_length=1)
 
 
 class SketchResult(BaseModel):

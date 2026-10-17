@@ -26,7 +26,7 @@ from ....application.ports.event_publisher import EventPublisher
 from ....application.services.video_path_resolver import VideoPathResolver
 from ....application.use_cases.generate_batch_videos import BatchSummary
 from ....domain.value_objects.video_config import VideoConfig
-from ...bundled import bundled_hand_paths
+from ...bundled import BundledHandPaths, bundled_hand_paths
 from ...composition import (
     build_generate_sketch_video_use_case,
     build_generate_videos_from_directory_use_case,
@@ -54,14 +54,35 @@ def _video_config(options: SketchOptions) -> VideoConfig:
     return VideoConfig(**settings)
 
 
+def _missing_asset(path: Path, label: str) -> HTTPException:
+    """404 — a referenced asset (image, directory or hand file) does not exist."""
+    return HTTPException(status_code=_STATUS_NOT_FOUND, detail=f"{label} not found: {path}")
+
+
 def _missing_image(image_path: Path) -> HTTPException:
-    """404 — the referenced image does not exist."""
-    return HTTPException(status_code=_STATUS_NOT_FOUND, detail=f"Image not found: {image_path}")
+    """404 — the referenced source image does not exist."""
+    return _missing_asset(image_path, "Image")
+
+
+def _hand_assets(hand_image_path: str | None, hand_mask_path: str | None) -> BundledHandPaths:
+    """Resolve the drawing-hand assets: request paths or the bundled ones.
+
+    Explicit paths are validated up front so a bad custom asset fails as a
+    clean, labelled ``404`` instead of surfacing from inside the use case.
+    """
+    bundled = bundled_hand_paths()
+    image = Path(hand_image_path) if hand_image_path else bundled.image
+    mask = Path(hand_mask_path) if hand_mask_path else bundled.mask
+    if not image.is_file():
+        raise _missing_asset(image, "Hand image")
+    if not mask.is_file():
+        raise _missing_asset(mask, "Hand mask")
+    return BundledHandPaths(image=image, mask=mask)
 
 
 def _missing_directory(directory: Path) -> HTTPException:
     """404 — the referenced directory does not exist."""
-    return HTTPException(status_code=_STATUS_NOT_FOUND, detail=f"Directory not found: {directory}")
+    return _missing_asset(directory, "Directory")
 
 
 def _unusable(exc: Exception) -> HTTPException:
@@ -89,7 +110,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
         if not image_path.is_file():
             raise _missing_image(image_path)
 
-        hand_paths = bundled_hand_paths()
+        hand_paths = _hand_assets(request.hand_image_path, request.hand_mask_path)
         loader = create_image_loader()
         use_case = build_generate_sketch_video_use_case(
             hand_image_path=hand_paths.image,
@@ -144,7 +165,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
         if not input_dir.is_dir():
             raise _missing_directory(input_dir)
 
-        hand_paths = bundled_hand_paths()
+        hand_paths = _hand_assets(request.hand_image_path, request.hand_mask_path)
         use_case = build_generate_videos_from_directory_use_case(
             hand_image_path=hand_paths.image,
             hand_mask_path=hand_paths.mask,

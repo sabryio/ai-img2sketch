@@ -123,7 +123,9 @@ or the filesystem lives here.
   - `routers/` — `create_health_router()`, `create_sketches_router()` and
     `create_events_router()`, each built by a factory injecting dependencies,
     mounted under `/api/v1`
-  - `schemas.py` — request/response DTOs translated into domain value objects
+  - `schemas.py` — request/response DTOs translated into domain value objects;
+    every CLI option is settable per request (plus `black_pixel_threshold` and
+    custom hand assets), making the API a superset of the CLI
   - SSE frames follow the lifecycle *initial ack → `event`/`id`/`data`
     messages → keep-alive comments → terminal `close` event*
   - `__main__.py` — the `img2sketch-api` console script runner

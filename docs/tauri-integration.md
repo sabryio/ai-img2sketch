@@ -59,11 +59,27 @@ const response = await fetch("http://localhost:8000/api/v1/sketches", {
   body: JSON.stringify({
     image_path: "/app/media/photo.jpg", // a path INSIDE the container (see Volumes)
     output_dir: "/app/output",
-    config: { split_len: 16, object_skip_rate: 8 },
+    config: {
+      frame_rate: 25,           // 1-120 fps
+      split_len: 16,            // 1-100 grid split length
+      object_skip_rate: 8,      // 1-100 skip rate for drawing
+      draw_duration_sec: 5.0,   // 0.1-600 s, overrides object_skip_rate
+      end_duration_sec: 2,      // 0-10 s final hold
+      black_pixel_threshold: 10, // 0-255
+    },
+    object_mask_path: "/app/media/masks.json",  // optional
+    hand_image_path: "/app/media/my-hand.png",  // optional, else bundled assets
+    hand_mask_path: "/app/media/my-hand-mask.png", // optional, else bundled assets
   }),
 });
 const result = await response.json(); // { output_path: "/app/output/photo.mp4" }
 ```
+
+Every field is optional apart from the input path; anything omitted falls back
+to the same defaults the CLI uses (frame rate 25, split 10, skip 8, end hold
+2 s, threshold 10, bundled drawing hand). The API is a superset of the CLI
+options — `black_pixel_threshold` was previously CLI-internal only. All
+unchanged fields of `POST /sketches/batch` apply per directory.
 
 ### Error mapping (shared by the SSE failure events)
 

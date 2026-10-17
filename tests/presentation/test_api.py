@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, cast
@@ -13,8 +14,14 @@ from fastapi.testclient import TestClient
 
 from ai_img2sketch.presentation.api.app import create_app
 from ai_img2sketch.presentation.api.settings import ApiSettings
+from ai_img2sketch.presentation.bundled import bundled_hand_paths
 
-_FAST_SETTINGS = {"split_len": 16, "object_skip_rate": 14, "end_duration_sec": 0}
+_FAST_SETTINGS = {
+    "split_len": 16,
+    "object_skip_rate": 14,
+    "end_duration_sec": 0,
+    "black_pixel_threshold": 20,
+}
 
 
 # Restrict all anyio-marked tests in this module to the asyncio backend.
@@ -82,6 +89,47 @@ def test_generate_sketch_returns_404_for_a_missing_image(client: TestClient) -> 
     # The detail echoes the (platform-formatted) path; match the basename only.
     assert "Image not found" in response.text
     assert "file.png" in response.text
+
+
+def test_generate_sketch_returns_404_for_missing_custom_hand(
+    client: TestClient, tmp_path: Path
+) -> None:
+    image = _write_image(tmp_path / "photo.png")
+
+    response = client.post(
+        "/api/v1/sketches",
+        json={"image_path": str(image), "hand_image_path": str(tmp_path / "gone.png")},
+    )
+
+    assert response.status_code == 404
+    assert "Hand image not found" in response.text
+    assert "gone.png" in response.text
+
+
+def test_custom_hand_assets_are_honored(client: TestClient, tmp_path: Path) -> None:
+    bundled = bundled_hand_paths()
+    custom_dir = tmp_path / "hands"
+    custom_dir.mkdir()
+    hand_copy = custom_dir / "my-hand.png"
+    mask_copy = custom_dir / "my-hand-mask.png"
+    shutil.copy(bundled.image, hand_copy)
+    shutil.copy(bundled.mask, mask_copy)
+    image = _write_image(tmp_path / "photo.png")
+
+    response = client.post(
+        "/api/v1/sketches",
+        json={
+            "image_path": str(image),
+            "output_dir": str(tmp_path / "videos"),
+            "config": _FAST_SETTINGS,
+            "hand_image_path": str(hand_copy),
+            "hand_mask_path": str(mask_copy),
+        },
+    )
+
+    assert response.status_code == 200
+    payload = cast(dict[str, Any], response.json())
+    assert Path(payload["output_path"]).is_file()
 
 
 def test_generate_batch_404_and_422_paths(client: TestClient, tmp_path: Path) -> None:
