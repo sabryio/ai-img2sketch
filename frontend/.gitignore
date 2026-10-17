@@ -1,0 +1,19 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+
+# Test / tooling output
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# The repo-root .gitignore ignores every `lib/` directory (a Python packaging
+# rule), which would silently swallow this app's own library modules.
+!src/lib/
+!src/lib/**
