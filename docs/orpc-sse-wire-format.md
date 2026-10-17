@@ -210,7 +210,7 @@ async def _stream(bus) -> AsyncIterator[str]:
         if event.event == "close":
             yield _close_frame()
             return
-        if event.event == "ping":
+        if event.event == "keepalive":
             yield _comment()              # keep-alive
             continue
         # inject the discriminant AND keep it authoritative: a payload field

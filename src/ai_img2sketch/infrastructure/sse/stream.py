@@ -14,7 +14,7 @@ Wire format (derived from ``@standard-server/fetch`` source):
 - Keep-alives and the initial flush are anonymous comments (``:``) so they are
   silently ignored by the browser and never reach application code. The source
   decides *when* to keep alive (yield ``ORPCSseStream.comment()``); this class
-  only renders it — e.g. the bus turns its idle ``ping`` into a comment.
+  only renders it — e.g. the bus turns its idle keep-alive into a comment.
 
 Typical usage inside a FastAPI route::
 

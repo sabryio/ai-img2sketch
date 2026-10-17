@@ -6,7 +6,7 @@ wire format is always oRPC-compatible (``asyncIteratorObject`` on the client).
 
 The domain event name is injected as the ``"event"`` discriminant key inside
 the JSON payload, matching the Zod ``discriminatedUnion("event", [...])``
-schema on the frontend contract. The bus ``ping`` is rendered as an anonymous
+schema on the frontend contract. The bus keep-alive is rendered as an anonymous
 keep-alive comment (see ``docs/orpc-sse-wire-format.md``).
 """
 

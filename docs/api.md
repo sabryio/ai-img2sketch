@@ -164,9 +164,10 @@ Lifecycle:
 
    The discriminant is authoritative: a payload field named `"event"` never
    overwrites it.
-3. **Keep-alives** — after 15 s of silence the bus emits a synthetic `ping`,
-   rendered as an anonymous comment (`: \n\n`) so proxies and the webview never
-   time out the stream. Comments carry no `id` and are ignored by the client.
+3. **Keep-alives** — after 15 s of silence the bus emits the reserved
+   `keepalive` event, rendered as an anonymous comment (`: \n\n`) so proxies and
+   the webview never time out the stream. Comments carry no `id` and are ignored
+   by the client.
 4. **Close** — when the server shuts down the last frame is
    `event: close\ndata: \n\n`, then the stream ends cleanly. There is no
    `retry:` hint: the oRPC client does not reconnect automatically.

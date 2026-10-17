@@ -158,7 +158,7 @@ in `image_path` / `input_dir` / `output_dir`.
    Discriminants: `sketch.started` / `sketch.completed` / `sketch.failed` and
    `batch.started` / `batch.completed` / `batch.failed` — the same names and
    payload fields the REST responses use.
-3. **Keep-alives** — during silence (>15 s) the bus `ping` becomes an anonymous
+3. **Keep-alives** — during silence (>15 s) the bus keep-alive becomes an anonymous
    `: \n\n` comment, so proxies and the webview do not time the stream out.
 4. **Close event** — on backend shutdown: `event: close`, then the stream ends.
    No `retry:` hint is sent; oRPC reconnection is manual.

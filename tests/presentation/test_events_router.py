@@ -44,7 +44,7 @@ def _frames(events: list[DomainEvent]) -> list[str]:
     return asyncio.run(collect())
 
 
-def test_keepalive_ping_renders_as_anonymous_comment() -> None:
+def test_keepalive_renders_as_anonymous_comment() -> None:
     """Spec: keep-alives are empty comments and never consume an event id."""
     frames = _frames(
         [
@@ -56,7 +56,7 @@ def test_keepalive_ping_renders_as_anonymous_comment() -> None:
 
     assert frames == [
         ": \n\n",  # initial flush
-        ": \n\n",  # keep-alive for the idle ping
+        ": \n\n",  # keep-alive for the idle bus
         'id: 0\ndata: {"event": "sketch.started", "image": "a.png"}\n\n',
         "event: close\ndata: \n\n",
     ]

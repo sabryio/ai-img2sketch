@@ -18,8 +18,8 @@ from ...application.ports.event_publisher import CLOSE_EVENT, KEEPALIVE_EVENT, D
 
 logger = logging.getLogger(__name__)
 
-#: Seconds of silence after which a synthetic ``ping`` is emitted so proxies
-#: and idle Tauri webviews keep the connection open.
+#: Seconds of silence after which the reserved :data:`KEEPALIVE_EVENT` is
+#: emitted so proxies and idle Tauri webviews keep the connection open.
 _KEEPALIVE_AFTER_SECONDS = 15.0
 
 

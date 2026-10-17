@@ -12,12 +12,17 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
-#: Reserved event name: synthetic keep-alive yielded by ``EventStream`` while
-#: the subscriber is idle. Transports may render it however their protocol
-#: dictates (SSE turns it into an anonymous comment).
-KEEPALIVE_EVENT = "ping"
+#: Reserved event names with which ``EventStream`` marks *stream lifecycle*
+#: rather than a domain occurrence. Their values are in-process sentinels only —
+#: each transport renders its own wire form, so neither value is ever sent to a
+#: client (SSE renders :data:`KEEPALIVE_EVENT` as an anonymous, empty comment
+#: and :data:`CLOSE_EVENT` as an ``event: close`` frame).
+#:
+#: :data:`KEEPALIVE_EVENT` — synthetic keep-alive yielded while the subscriber is
+#: idle, so proxies and webviews do not time the connection out.
+KEEPALIVE_EVENT = "keepalive"
 
-#: Reserved event name: terminal event yielded after the stream shuts down.
+#: :data:`CLOSE_EVENT` — terminal event yielded after the stream shuts down.
 #: Transports must stop iterating once it arrives.
 CLOSE_EVENT = "close"
 

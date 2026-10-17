@@ -15,7 +15,7 @@ from ai_img2sketch.infrastructure.sse import ORPCSseStream, SseItem
 
 def test_comment_frame() -> None:
     assert ORPCSseStream.build_comment() == ": \n\n"
-    assert ORPCSseStream.build_comment("ping") == ": ping\n\n"
+    assert ORPCSseStream.build_comment("keep-alive") == ": keep-alive\n\n"
 
 
 def test_message_frame_without_seq() -> None:

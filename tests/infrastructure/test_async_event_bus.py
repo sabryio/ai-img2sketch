@@ -39,18 +39,18 @@ def test_pub_sub_delivers_events_in_order() -> None:
     assert events[0].data == {"image": "a.png"}
 
 
-def test_ping_keeps_idle_streams_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_keepalive_keeps_idle_streams_alive(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(bus_module, "_KEEPALIVE_AFTER_SECONDS", 0.02)
 
     async def scenario() -> list[DomainEvent]:
         bus = AsyncEventBus()
         stream = bus.subscribe()
         await bus.publish("sketch.completed", {})
-        return await _drain(stream, 2)  # first the event, then the silence ping
+        return await _drain(stream, 2)  # first the event, then the idle keep-alive
 
     events = asyncio.run(scenario())
 
-    assert [event.event for event in events] == ["sketch.completed", "ping"]
+    assert [event.event for event in events] == ["sketch.completed", "keepalive"]
 
 
 def test_close_is_delivered_to_subscribers() -> None:

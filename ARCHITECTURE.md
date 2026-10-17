@@ -132,7 +132,7 @@ or the filesystem lives here.
     custom hand assets), making the API a superset of the CLI
   - SSE frames follow the oRPC-compatible lifecycle *initial flush comment →
     `id`/`data` message frames carrying the `"event"` discriminant → anonymous
-    keep-alive comments (bus `ping`) → terminal `close` frame*; the wire format
+    keep-alive comments (bus keep-alive) → terminal `close` frame*; the wire format
     is documented in `docs/orpc-sse-wire-format.md`
   - `__main__.py` — the `img2sketch-api` console script runner
 
