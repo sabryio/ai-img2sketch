@@ -205,17 +205,30 @@ async def test_events_stream_sets_sse_headers() -> None:
             assert response.headers["content-type"].startswith("text/event-stream")
 
             head = ""
+            signalled = False
             async for chunk in response.aiter_text():
                 head += chunk
-                if ": connected" in head:
-                    # Initial frames received — close the bus so the SSE
-                    # generator yields the "close" frame and terminates.
+                if not signalled and ": \n" in head:
+                    # Initial flush received — the route subscribed to the bus
+                    # before streaming, so publishing now can never be missed.
+                    signalled = True
+                    await app.state.event_bus.publish(
+                        "sketch.started",
+                        {"image": "a.png", "output_path": "a.mp4"},
+                    )
                     await app.state.event_bus.close()
                 if "event: close" in head:
                     break
 
-            assert "retry: 5000" in head  # reconnect hint
-            assert ": connected" in head  # initial ack frame
+            # oRPC wire format (docs/orpc-sse-wire-format.md): an initial empty
+            # comment, `data:` frames carrying the event discriminant, and a
+            # terminal `event: close` frame. No `retry:` — reconnection is not
+            # automatic for the oRPC client.
+            assert head.startswith(": ")  # initial flush comment
+            assert '"event": "sketch.started"' in head  # discriminant in payload
+            assert '"image": "a.png"' in head  # payload preserved
+            assert "event: close" in head  # terminal frame
+            assert "retry:" not in head
 
         server.should_exit = True
 

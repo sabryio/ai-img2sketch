@@ -139,51 +139,52 @@ in `image_path` / `input_dir` / `output_dir`.
 
 ## SSE Event Streaming
 
-`GET /api/v1/events` follows a classic lifecycle:
+`GET /api/v1/events` speaks the oRPC `asyncIteratorObject` wire format
+(`docs/orpc-sse-wire-format.md`) so the frontend can consume it with
+`@orpc/client` — or a plain `EventSource`. Lifecycle:
 
-1. **Initial frames** — sent immediately on connect:
-   `retry: 5000` (reconnect hint) then `: connected` (unnamed ack comment).
-2. **Message events** — one frame per application event:
+1. **Initial flush** — an anonymous empty comment (`: \n\n`) on connect. The
+   route subscribes to the bus before streaming, so nothing published during
+   connect is lost.
+2. **Message events** — one `data:` frame per event, with a per-connection `id`.
+   There is **no `event:` field** (oRPC only decodes the unnamed `message`
+   type); the event name is the `"event"` discriminant inside the JSON:
 
    ```
-   event: sketch.completed
    id: 0
-   data: {"image": "/app/media/a.jpg", "output_path": "/app/output/a.mp4"}
+   data: {"event": "sketch.completed", "image": "/app/media/a.jpg", "output_path": "/app/output/a.mp4"}
    ```
 
-   Event names: `sketch.started` / `sketch.completed` / `sketch.failed` and
+   Discriminants: `sketch.started` / `sketch.completed` / `sketch.failed` and
    `batch.started` / `batch.completed` / `batch.failed` — the same names and
    payload fields the REST responses use.
-3. **Keep-alives** — during silence (>15 s) an anonymous `: keep-alive`
-   comment keeps proxies and the webview from timing out.
-4. **Close event** — when the backend shuts down: `event: close`, then the
-   stream ends.
+3. **Keep-alives** — during silence (>15 s) the bus `ping` becomes an anonymous
+   `: \n\n` comment, so proxies and the webview do not time the stream out.
+4. **Close event** — on backend shutdown: `event: close`, then the stream ends.
+   No `retry:` hint is sent; oRPC reconnection is manual.
 
 ### Frontend usage
 
 ```typescript
 const source = new EventSource("http://localhost:8000/api/v1/events");
 
-const names = [
-  "sketch.started",
-  "sketch.completed",
-  "sketch.failed",
-  "batch.started",
-  "batch.completed",
-  "batch.failed",
-] as const;
-
-for (const name of names) {
-  source.addEventListener(name, (event) => {
-    const data = JSON.parse((event as MessageEvent).data);
-    // e.g. preload the video from data.output_path once sketch.completed fires
-  });
-}
+// One handler for every application event — dispatch on the discriminant.
+source.onmessage = (message) => {
+  const data = JSON.parse(message.data) as { event: string };
+  switch (data.event) {
+    case "sketch.completed": /* use data.output_path */ break;
+    case "sketch.failed":    /* surface data.error */   break;
+    // batch.* — parallel shapes from the REST responses
+  }
+};
 
 source.onopen = () => console.log("stream attached");
-source.onerror = () => console.warn("connection lost; browser auto-retries (retry: 5000)");
+source.onerror = () => console.warn("stream lost; reopen explicitly");
 
-// Close when the app window unloads to stop keeping the connection alive:
+// The terminal frame is an explicitly named event.
+source.addEventListener("close", () => source.close());
+
+// Close when the app window unloads:
 window.addEventListener("beforeunload", () => source.close());
 ```
 

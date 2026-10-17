@@ -6,12 +6,13 @@ wire format is always oRPC-compatible (``asyncIteratorObject`` on the client).
 
 The domain event name is injected as the ``"event"`` discriminant key inside
 the JSON payload, matching the Zod ``discriminatedUnion("event", [...])``
-schema on the frontend contract.
+schema on the frontend contract. The bus ``ping`` is rendered as an anonymous
+keep-alive comment (see ``docs/orpc-sse-wire-format.md``).
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -37,25 +38,28 @@ def _payload(event: DomainEvent) -> dict[str, object]:
     return {EVENT_KEY: event.event, **extras}
 
 
-async def _bus_to_generator(
-    event_stream: EventStream,
-) -> AsyncGenerator[SseItem, None]:
-    """Translate bus events into plain dicts for :class:`ORPCSseStream`.
+def _bus_events(events: AsyncIterator[DomainEvent]) -> AsyncGenerator[SseItem, None]:
+    """Translate subscribed bus events into items for :class:`ORPCSseStream`.
 
-    - ``KEEPALIVE_EVENT`` → skipped (``ORPCSseStream`` handles keep-alives via
-      its own comment frames; the bus ping is not forwarded to clients).
-    - ``CLOSE_EVENT``     → yields ``ORPCSseStream.done()`` to emit the
-      terminal ``event: close`` frame and stop the stream.
-    - Everything else    → yields ``_payload(event)`` so the frontend
-      ``discriminatedUnion`` can dispatch on ``EVENT_KEY``.
+    - ``KEEPALIVE_EVENT`` → an anonymous comment frame: idle connections stay
+      open without reaching application code (``docs/orpc-sse-wire-format.md``).
+    - ``CLOSE_EVENT``     → ``ORPCSseStream.done()``: the terminal
+      ``event: close`` frame, then the stream stops.
+    - Everything else    → ``_payload(event)`` so the frontend
+      ``discriminatedUnion`` can dispatch on the discriminant key.
     """
-    async for event in event_stream.subscribe():
-        if event.event == KEEPALIVE_EVENT:
-            continue
-        if event.event == CLOSE_EVENT:
-            yield ORPCSseStream.done()
-            return
-        yield _payload(event)
+
+    async def generate() -> AsyncGenerator[SseItem, None]:
+        async for event in events:
+            if event.event == KEEPALIVE_EVENT:
+                yield ORPCSseStream.comment()
+                continue
+            if event.event == CLOSE_EVENT:
+                yield ORPCSseStream.done()
+                return
+            yield _payload(event)
+
+    return generate()
 
 
 def create_events_router(event_stream: EventStream) -> APIRouter:
@@ -68,6 +72,9 @@ def create_events_router(event_stream: EventStream) -> APIRouter:
     )
     async def stream_events() -> StreamingResponse:
         """Keep a connection open and push every bus event to the client."""
-        return ORPCSseStream(_bus_to_generator(event_stream)).to_response()
+        # Attach before the first frame goes out, so events published between
+        # the connection and the initial flush can never be missed.
+        events = event_stream.subscribe()
+        return ORPCSseStream(_bus_events(events)).to_response()
 
     return router

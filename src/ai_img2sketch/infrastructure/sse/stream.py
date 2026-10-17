@@ -12,7 +12,9 @@ Wire format (derived from ``@standard-server/fetch`` source):
 - The ``event:`` field is only used for the reserved ``"close"`` terminal frame
   and the optional ``"error"`` frame.
 - Keep-alives and the initial flush are anonymous comments (``:``) so they are
-  silently ignored by the browser and never reach application code.
+  silently ignored by the browser and never reach application code. The source
+  decides *when* to keep alive (yield ``ORPCSseStream.comment()``); this class
+  only renders it — e.g. the bus turns its idle ``ping`` into a comment.
 
 Typical usage inside a FastAPI route::
 
@@ -35,8 +37,9 @@ Or with the built-in ``to_response()`` shortcut::
         return ORPCSseStream(my_async_generator()).to_response()
 
 The async generator passed to the constructor must yield ``SseItem`` values —
-either a plain ``dict`` or a ``CloseSentinel`` (obtained via
-``ORPCSseStream.done()``).  Any ``"event"`` key already present in a dict is
+a plain ``dict`` (a message frame), an ``ORPCSseStream.comment(...)`` sentinel
+(an anonymous comment, used for keep-alives), or ``ORPCSseStream.done()``
+(terminal ``event: close``).  Any ``"event"`` key already present in a dict is
 preserved; for dicts without one the caller is responsible for injecting the
 discriminant before yielding.
 
@@ -71,8 +74,19 @@ class CloseSentinel:
     data: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class CommentSentinel:
+    """Yielded by the source generator to emit an anonymous ``:`` comment line.
+
+    Comments are ignored by the oRPC client by design; use them for keep-alives
+    during silence (obtain via ``ORPCSseStream.comment()``).
+    """
+
+    text: str = ""
+
+
 #: Union of all valid yield types for an ``ORPCSseStream`` source generator.
-SseItem = dict[str, Any] | CloseSentinel
+SseItem = dict[str, Any] | CloseSentinel | CommentSentinel
 
 
 class ORPCSseError(Exception):
@@ -103,14 +117,13 @@ class ORPCSseStream:
     Parameters
     ----------
     source:
-        Async generator that yields :data:`SseItem` values (plain ``dict`` or
-        ``ORPCSseStream.done()``).  Raise :class:`ORPCSseStream.Error` to emit
+        Async generator that yields :data:`SseItem` values: plain ``dict``
+        message frames, ``ORPCSseStream.comment(...)`` comments and
+        ``ORPCSseStream.done()``.  Raise :class:`ORPCSseStream.Error` to emit
         an error frame.
-    keepalive_comment:
-        Text of the keep-alive comment line.  Must not contain newlines.
-        Defaults to an empty string (oRPC server default).
     initial_comment:
-        Text of the initial flush comment.  Defaults to an empty string.
+        Text of the initial flush comment.  Defaults to an empty string
+        (the oRPC default: ``": \\n\\n"``).
     """
 
     # Expose nested types so callers import one name.
@@ -126,11 +139,9 @@ class ORPCSseStream:
         self,
         source: AsyncGenerator[SseItem, None],
         *,
-        keepalive_comment: str = "",
         initial_comment: str = "",
     ) -> None:
         self._source = source
-        self._keepalive_comment = keepalive_comment
         self._initial_comment = initial_comment
 
     # ------------------------------------------------------------------
@@ -145,6 +156,15 @@ class ORPCSseStream:
         Most callers pass nothing — oRPC ignores the close payload.
         """
         return CloseSentinel(data or {})
+
+    @staticmethod
+    def comment(text: str = "") -> CommentSentinel:
+        """Yield this from the source generator to emit an anonymous comment.
+
+        The oRPC client ignores comments entirely; they keep idle connections
+        alive (the reference server sends one every 15 s of silence).
+        """
+        return CommentSentinel(text)
 
     # ------------------------------------------------------------------
     # Frame builders  (static — useful for unit tests)
@@ -194,6 +214,9 @@ class ORPCSseStream:
                     if isinstance(item, CloseSentinel):
                         yield self.build_close(item.data)
                         return
+                    if isinstance(item, CommentSentinel):
+                        yield self.build_comment(item.text)
+                        continue
                     yield self.build_message(item, seq=seq)
                     seq += 1
             except ORPCSseError as exc:

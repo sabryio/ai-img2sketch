@@ -8,7 +8,6 @@ from typing import Any
 
 from ai_img2sketch.infrastructure.sse import ORPCSseStream, SseItem
 
-
 # ---------------------------------------------------------------------------
 # Frame builder tests  (static helpers — pure string construction)
 # ---------------------------------------------------------------------------
@@ -122,6 +121,19 @@ def test_seq_increments_across_messages() -> None:
 
     for idx, chunk in enumerate(messages):
         assert chunk.startswith(f"id: {idx}\n")
+
+
+def test_comment_sentinel_renders_as_comment_frame() -> None:
+    async def source() -> AsyncGenerator[SseItem, None]:
+        yield ORPCSseStream.comment()  # keep-alive, empty (oRPC default)
+        yield ORPCSseStream.comment("keep-alive")
+        yield {"event": "tick"}
+
+    chunks = asyncio.run(_collect(source()))
+
+    assert chunks[1] == ": \n\n"
+    assert chunks[2] == ": keep-alive\n\n"
+    assert chunks[3].startswith("id: 0\n")  # comments never consume a sequence id
 
 
 def test_custom_initial_comment() -> None:

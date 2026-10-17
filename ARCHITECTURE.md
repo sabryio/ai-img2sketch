@@ -104,6 +104,9 @@ or the filesystem lives here.
   implements `VideoWriterFactory`
 - **AsyncEventBus** (in `events/`) implements `EventPublisher` (write side) and
   `EventStream` (read side) — the in-process bus backing the SSE transport
+- **`sse/`**: `ORPCSseStream` — framework-agnostic encoder for the
+  oRPC-compatible wire format (comments/keep-alives, `id`/`data` message
+  frames, `close`/`error` frames); see `docs/orpc-sse-wire-format.md`
 - **`config/`**: `ApiSettings`, loaded from `APP_*` environment variables
   (host, port, log level, CORS origins)
 - **`tauri/backend_client.py`**: helpers that let a Tauri shell start/stop the
@@ -127,8 +130,10 @@ or the filesystem lives here.
   - `schemas.py` — request/response DTOs translated into domain value objects;
     every CLI option is settable per request (plus `black_pixel_threshold` and
     custom hand assets), making the API a superset of the CLI
-  - SSE frames follow the lifecycle *initial ack → `event`/`id`/`data`
-    messages → keep-alive comments → terminal `close` event*
+  - SSE frames follow the oRPC-compatible lifecycle *initial flush comment →
+    `id`/`data` message frames carrying the `"event"` discriminant → anonymous
+    keep-alive comments (bus `ping`) → terminal `close` frame*; the wire format
+    is documented in `docs/orpc-sse-wire-format.md`
   - `__main__.py` — the `img2sketch-api` console script runner
 
 ## Design Patterns

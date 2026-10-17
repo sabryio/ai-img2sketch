@@ -138,65 +138,77 @@ FastAPI validation errors (schema/range violations) return the default
 
 ## `GET /api/v1/events` — Server-Sent Events
 
-Standard `text/event-stream` with `Cache-Control: no-cache` and
-`X-Accel-Buffering: no`. Lifecycle:
+oRPC-compatible `text/event-stream` (see `docs/orpc-sse-wire-format.md` for the
+full spec) with `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+Lifecycle:
 
-1. **Initial frames** — sent the moment the client attaches:
-
-   ```
-   retry: 5000
-
-   : connected
-   ```
-
-   `retry` sets the browser's auto-reconnect interval (5 s); `: connected` is
-   an anonymous comment that proves the stream is alive.
-2. **Message events** — one frame per event, `id` counting per connection:
+1. **Initial flush** — an anonymous empty comment, sent the moment the client
+   attaches so the response headers reach it before the first real event:
 
    ```
-   event: sketch.started
+   : \n\n
+   ```
+
+   The route subscribes to the bus **before** streaming, so an event published
+   between connecting and receiving this frame is never lost.
+2. **Message events** — one `data:` frame per event, with a per-connection `id`.
+   The SSE `event:` field is deliberately **omitted**: oRPC decodes every
+   unnamed frame as the default `message` type (`event: close` / `event: error`
+   are the only reserved names). The event name therefore travels inside the
+   JSON as the `"event"` discriminant:
+
+   ```
    id: 0
-   data: {"image": "/app/media/a.jpg", "output_path": "/app/output/a.mp4"}
+   data: {"event": "sketch.started", "image": "/app/media/a.jpg", "output_path": "/app/output/a.mp4"}
    ```
-3. **Keep-alives** — after 15 s of silence the bus emits a synthetic `ping`
-   event, rendered as an anonymous comment (`: keep-alive`), so proxies and
-   the webview never time out the stream.
+
+   The discriminant is authoritative: a payload field named `"event"` never
+   overwrites it.
+3. **Keep-alives** — after 15 s of silence the bus emits a synthetic `ping`,
+   rendered as an anonymous comment (`: \n\n`) so proxies and the webview never
+   time out the stream. Comments carry no `id` and are ignored by the client.
 4. **Close** — when the server shuts down the last frame is
-   `event: close\ndata: \n\n`, then the stream ends cleanly.
+   `event: close\ndata: \n\n`, then the stream ends cleanly. There is no
+   `retry:` hint: the oRPC client does not reconnect automatically.
 
 ### Event catalogue
 
+Every payload carries `"event": "<name>"` plus these fields:
+
 | Event | When | `data` |
 |---|---|---|
-| `sketch.started` | single request accepted, before rendering | `{"image", "output_path"}` |
-| `sketch.completed` | video written | `{"image", "output_path"}` |
-| `sketch.failed` | rendering failed | `{"image", "output_path", "error"}` |
-| `batch.started` | batch request accepted | `{"input_dir"}` |
-| `batch.completed` | batch finished | `{"input_dir", "succeeded", "failed"}` (ints) |
-| `batch.failed` | batch failed before/while processing | `{"input_dir", "error"}` |
+| `sketch.started` | single request accepted, before rendering | `{"event", "image", "output_path"}` |
+| `sketch.completed` | video written | `{"event", "image", "output_path"}` |
+| `sketch.failed` | rendering failed | `{"event", "image", "output_path", "error"}` |
+| `batch.started` | batch request accepted | `{"event", "input_dir"}` |
+| `batch.completed` | batch finished | `{"event", "input_dir", "succeeded", "failed"}` (ints) |
+| `batch.failed` | batch failed before/while processing | `{"event", "input_dir", "error"}` |
 
 `image` / `output_path` fields carry the same strings as the corresponding
 REST responses (`404`/`422` messages mirror the `error` values).
 
 ### Frontend usage
 
+The typed contract lives in the frontend's `rpc/` module. With the raw
+`EventSource` API, read the discriminant from the payload — named listeners
+never fire, because application frames carry no `event:` field:
+
 ```typescript
 const source = new EventSource("http://localhost:8000/api/v1/events");
 
-for (const name of [
-  "sketch.started", "sketch.completed", "sketch.failed",
-  "batch.started", "batch.completed", "batch.failed",
-]) {
-  source.addEventListener(name, (event) => {
-    const data = JSON.parse((event as MessageEvent).data);
-    console.log(name, data);
-  });
-}
+source.onmessage = (message) => {
+  const payload: { event: string } & Record<string, unknown> = JSON.parse(message.data);
+  switch (payload.event) {
+    case "sketch.completed": /* payload.output_path */ break;
+    case "sketch.failed":    /* payload.error */       break;
+    // batch.started | batch.completed | batch.failed | sketch.started
+  }
+};
 
-// Anonymous comments (`: connected`, `: keep-alive`) are not dispatched; the
-// browser handles them internally. Default `onmessage` never fires — every
-// application event carries an explicit `event:` name.
+source.addEventListener("close", () => source.close()); // terminal frame
 ```
+
+Anonymous comments (`: \n\n`) are handled by the browser and never dispatched.
 
 ---
 

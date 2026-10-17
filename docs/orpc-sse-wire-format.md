@@ -106,7 +106,7 @@ and `null` are all valid.
 data: 42
 
 # object (most common)
-data: {"event":"sketch.started","image":"/app/photo.jpg","output_path":"/app/out.mp4"}
+data: {"event":"started","image":"/app/photo.jpg","output_path":"/app/out.mp4"}
 
 # empty close
 data:
@@ -138,8 +138,8 @@ field inside the JSON is the only way to tell them apart on the client.
 ### Recommended: add an `"event"` key to every payload
 
 ```jsonc
-// sketch.started
-{ "event": "sketch.started", "image": "/a.jpg", "output_path": "/a.mp4" }
+// started
+{ "event": "started", "image": "/a.jpg", "output_path": "/a.mp4" }
 
 // batch.completed
 { "event": "batch.completed", "input_dir": "/photos", "succeeded": 3, "failed": 1 }
@@ -159,11 +159,11 @@ Cache-Control: no-cache
 
 : \n\n                                              ← initial flush (empty comment)
 
-data: {"event":"sketch.started","image":"/a.jpg","output_path":"/a.mp4"}\n\n
+data: {"event":"started","image":"/a.jpg","output_path":"/a.mp4"}\n\n
 
 : \n\n                                              ← keep-alive after 15 s silence
 
-data: {"event":"sketch.completed","image":"/a.jpg","output_path":"/a.mp4"}\n\n
+data: {"event":"completed","image":"/a.jpg","output_path":"/a.mp4"}\n\n
 
 event: close\n
 data: \n\n                                          ← terminal frame
@@ -204,16 +204,19 @@ def _comment(text: str = "") -> str:
     return f": {text}\n\n"
 
 async def _stream(bus) -> AsyncIterator[str]:
+    events = bus.subscribe()              # attach before the first frame
     yield _comment()                      # initial flush
-    async for event in bus.subscribe():
+    async for event in events:
         if event.event == "close":
             yield _close_frame()
             return
         if event.event == "ping":
             yield _comment()              # keep-alive
             continue
-        # inject discriminant into payload
-        yield _frame({"event": event.event, **event.data})
+        # inject the discriminant AND keep it authoritative: a payload field
+        # named "event" must never clobber the real event name.
+        extras = {k: v for k, v in event.data.items() if k != "event"}
+        yield _frame({"event": event.event, **extras})
 
 router = APIRouter()
 
@@ -246,17 +249,17 @@ import { z } from "zod";
 
 const EventDataSchema = z.discriminatedUnion("event", [
   z.object({
-    event: z.literal("sketch.started"),
+    event: z.literal("started"),
     image: z.string(),
     output_path: z.string(),
   }),
   z.object({
-    event: z.literal("sketch.completed"),
+    event: z.literal("completed"),
     image: z.string(),
     output_path: z.string(),
   }),
   z.object({
-    event: z.literal("sketch.failed"),
+    event: z.literal("failed"),
     image: z.string(),
     error: z.string(),
   }),
@@ -290,7 +293,7 @@ const router = {
 
         yield withEventMeta(
           {
-            event: "sketch.started" as const,
+            event: "started" as const,
             image: "/a.jpg",
             output_path: "/a.mp4",
           },
@@ -357,7 +360,7 @@ export async function GET(): Promise<Response> {
       // yield application events — event name lives inside the JSON
       controller.enqueue(
         message(
-          { event: "sketch.started", image: "/a.jpg", output_path: "/a.mp4" },
+          { event: "started", image: "/a.jpg", output_path: "/a.mp4" },
           String(seq++),
         ),
       );
@@ -366,7 +369,7 @@ export async function GET(): Promise<Response> {
 
       controller.enqueue(
         message(
-          { event: "sketch.completed", image: "/a.jpg", output_path: "/a.mp4" },
+          { event: "completed", image: "/a.jpg", output_path: "/a.mp4" },
           String(seq++),
         ),
       );
