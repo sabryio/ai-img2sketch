@@ -1,6 +1,12 @@
 """Ports package."""
 
-from .event_publisher import DomainEvent, EventPublisher, EventStream
+from .event_publisher import (
+    CLOSE_EVENT,
+    KEEPALIVE_EVENT,
+    DomainEvent,
+    EventPublisher,
+    EventStream,
+)
 from .hand_loader import HandLoader
 from .image_loader import ImageLoader
 from .image_preprocessor import ImagePreprocessor
@@ -10,6 +16,8 @@ from .sketch_video_generator import SketchVideoGenerator
 from .video_writer import VideoWriter, VideoWriterFactory
 
 __all__ = [
+    "CLOSE_EVENT",
+    "KEEPALIVE_EVENT",
     "DomainEvent",
     "EventPublisher",
     "EventStream",

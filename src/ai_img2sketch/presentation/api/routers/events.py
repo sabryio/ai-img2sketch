@@ -22,7 +22,12 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 
-from ....application.ports.event_publisher import DomainEvent, EventStream
+from ....application.ports.event_publisher import (
+    CLOSE_EVENT,
+    KEEPALIVE_EVENT,
+    DomainEvent,
+    EventStream,
+)
 
 #: Reconnect hint sent to the client (``retry:`` line) at stream start.
 _RECONNECT_SECONDS = 5
@@ -57,10 +62,10 @@ def _sse_frames(event_stream: EventStream) -> AsyncIterator[str]:
         yield initial_frames()
         sequence = 0
         async for event in events:
-            if event.event == "close":
+            if event.event == CLOSE_EVENT:
                 yield close_frame()
                 return
-            if event.event == "ping":
+            if event.event == KEEPALIVE_EVENT:
                 yield ": keep-alive\n\n"
                 continue
             yield message_frame(event, sequence)

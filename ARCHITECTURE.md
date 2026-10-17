@@ -10,7 +10,8 @@ application defines.
 
 ```
         ┌────────────────────────────────────────────┐
-        │ Presentation (Click CLI + composition)     │
+        │ Presentation (Click CLI + FastAPI adapters │
+        │   + composition root)                      │
         │   └── depends on ──┐                       │
         └────────────────────┼───────────────────────┘
                              ▼
@@ -23,7 +24,7 @@ application defines.
         │ Domain (entities, value objects)           │
         └────────────────────────────────────────────┘
 
-        Infrastructure (OpenCV adapters) ── implements ──▶ Application ports
+        Infrastructure (OpenCV adapters + event bus) ── implements ──▶ Application ports
 ```
 
 ## Architecture Layers

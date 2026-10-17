@@ -13,9 +13,8 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import suppress
-from typing import Any
 
-from ...application.ports.event_publisher import DomainEvent
+from ...application.ports.event_publisher import CLOSE_EVENT, KEEPALIVE_EVENT, DomainEvent
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +29,14 @@ class AsyncEventBus:
     def __init__(self) -> None:
         self._subscriptions: list[asyncio.Queue[DomainEvent]] = []
 
-    async def publish(self, event: str, data: Mapping[str, Any]) -> None:
+    async def publish(self, event: str, data: Mapping[str, object]) -> None:
         """Publish ``event`` to every current subscriber.
 
         Must be awaited on the event loop (generation itself runs off-loop in a
         thread, so handlers publish on completion). Events published before any
         subscriber attached (the bus starts empty) are not replayed later.
         """
-        payload = DomainEvent(event=event, data=data)
+        payload = DomainEvent(event=event, data=dict(data))  # snapshot: callers may reuse theirs
         for queue in list(self._subscriptions):
             queue.put_nowait(payload)
 
@@ -47,7 +46,7 @@ class AsyncEventBus:
         Called on shutdown (lifespan) so clients receive an explicit end of
         stream instead of a dropped connection.
         """
-        terminal = DomainEvent(event="close", data={})
+        terminal = DomainEvent(event=CLOSE_EVENT, data={})
         for queue in list(self._subscriptions):
             queue.put_nowait(terminal)
 
@@ -69,7 +68,7 @@ class AsyncEventBus:
                 try:
                     yield await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_AFTER_SECONDS)
                 except asyncio.TimeoutError:
-                    yield DomainEvent(event="ping", data={})
+                    yield DomainEvent(event=KEEPALIVE_EVENT, data={})
         finally:
             with suppress(ValueError):
                 self._subscriptions.remove(queue)

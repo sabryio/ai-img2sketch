@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
@@ -90,10 +89,32 @@ def _unusable(exc: Exception) -> HTTPException:
     return HTTPException(status_code=_STATUS_UNPROCESSABLE, detail=str(exc))
 
 
-def _unexpected(detail: str) -> HTTPException:
+def _unexpected(exc: Exception) -> HTTPException:
     """500 — unexpected failure; logged server-side and surfaced verbatim."""
-    logger.exception("Generation failed (%s)", detail)
+    detail = str(exc)
+    logger.error("Generation failed (%s)", detail, exc_info=exc)
     return HTTPException(status_code=_STATUS_ERROR, detail=detail)
+
+
+async def _publish_failure(
+    publisher: EventPublisher,
+    event: str,
+    payload: dict[str, object],
+    exc: Exception,
+) -> HTTPException:
+    """Publish ``<event>.failed`` and map ``exc`` to its HTTP exception.
+
+    Single source of truth for error handling: both endpoints funnel every
+    failure through here, so the JSON status codes and the SSE failure events
+    can never drift apart (see the module docstring for the mapping).
+    """
+    payload["error"] = str(exc)
+    await publisher.publish(f"{event}.failed", payload)
+    if isinstance(exc, FileNotFoundError):
+        return HTTPException(status_code=_STATUS_NOT_FOUND, detail=str(exc))
+    if isinstance(exc, ValueError):
+        return _unusable(exc)
+    return _unexpected(exc)
 
 
 def create_sketches_router(publisher: EventPublisher) -> APIRouter:
@@ -121,7 +142,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
             image_path,
             Path(request.output_dir) if request.output_dir else None,
         )
-        payload: dict[str, Any] = {
+        payload: dict[str, object] = {
             "image": str(image_path),
             "output_path": str(output_path),
         }
@@ -138,19 +159,8 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                     Path(request.object_mask_path) if request.object_mask_path else None
                 ),
             )
-        except FileNotFoundError as exc:
-            payload["error"] = str(exc)
-            await publisher.publish("sketch.failed", payload)
-            raise HTTPException(status_code=_STATUS_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:
-            payload["error"] = str(exc)
-            await publisher.publish("sketch.failed", payload)
-            raise _unusable(exc) from exc
         except Exception as exc:
-            detail = str(exc)
-            payload["error"] = detail
-            await publisher.publish("sketch.failed", payload)
-            raise _unexpected(detail) from exc
+            raise await _publish_failure(publisher, "sketch", payload, exc) from exc
 
         await publisher.publish("sketch.completed", payload)
         return SketchResult(output_path=str(produced))
@@ -171,7 +181,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
             hand_mask_path=hand_paths.mask,
         )
         mask_path = Path(request.object_mask_path) if request.object_mask_path else None
-        payload: dict[str, Any] = {"input_dir": str(input_dir)}
+        payload: dict[str, object] = {"input_dir": str(input_dir)}
         await publisher.publish("batch.started", payload)
 
         try:
@@ -182,21 +192,10 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                 output_directory=(Path(request.output_dir) if request.output_dir else None),
                 object_mask_path=mask_path,
             )
-        except FileNotFoundError as exc:
-            payload["error"] = str(exc)
-            await publisher.publish("batch.failed", payload)
-            raise HTTPException(status_code=_STATUS_NOT_FOUND, detail=str(exc)) from exc
-        except ValueError as exc:  # no supported images in the folder
-            payload["error"] = str(exc)
-            await publisher.publish("batch.failed", payload)
-            raise _unusable(exc) from exc
-        except Exception as exc:
-            detail = str(exc)
-            payload["error"] = detail
-            await publisher.publish("batch.failed", payload)
-            raise _unexpected(detail) from exc
+        except Exception as exc:  # mapped to 404/422/500 and published as batch.failed
+            raise await _publish_failure(publisher, "batch", payload, exc) from exc
 
-        completed: dict[str, Any] = {
+        completed: dict[str, object] = {
             "input_dir": str(input_dir),
             "succeeded": len(summary.succeeded),
             "failed": len(summary.failed),

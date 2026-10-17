@@ -86,6 +86,24 @@ def test_publish_with_no_subscribers_is_not_an_error() -> None:
     asyncio.run(scenario())
 
 
+def test_publish_snapshots_the_payload() -> None:
+    """Callers may reuse/mutate their dict after publishing (sketch.* handlers do)."""
+
+    async def scenario() -> DomainEvent:
+        bus = AsyncEventBus()
+        stream = bus.subscribe()
+        payload: dict[str, object] = {"image": "a.png"}
+        await bus.publish("sketch.started", payload)
+        payload["error"] = "late mutation"  # must not leak into the queued event
+        event = await stream.__anext__()
+        await stream.aclose()
+        return event
+
+    event = asyncio.run(scenario())
+
+    assert event.data == {"image": "a.png"}
+
+
 def test_bus_satisfies_the_application_ports() -> None:
     bus = AsyncEventBus()
 
