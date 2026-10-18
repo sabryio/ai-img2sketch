@@ -45,6 +45,13 @@ test("processes a folder beside the source images", async ({ page, request }) =>
 
   await page.getByRole("button", { name: "Run Batch Generation" }).click();
 
+  // The bar is live for the whole run, and it says which image is in flight.
+  await expect(page.getByTestId("batch-progress")).toBeVisible();
+  await expect(page.getByTestId("batch-progress-percent")).toContainText("%");
+  await expect(page.getByTestId("batch-progress")).toContainText(
+    /image [12] of 2/,
+  );
+
   const rows = page.getByTestId("batch-row");
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toContainText("Success");

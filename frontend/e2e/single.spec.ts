@@ -37,6 +37,11 @@ test("generates a sketch video and reports it on the event stream", async ({
 
   await page.getByRole("button", { name: "Generate Sketch Video" }).click();
 
+  // While it runs the bar is live, and the number is the backend's own report
+  // from the stream — not a local guess.
+  await expect(page.getByTestId("single-progress")).toBeVisible();
+  await expect(page.getByTestId("single-progress-percent")).toContainText("%");
+
   // Result card, carrying the path the backend wrote. With no `output_dir` the
   // video lands next to the source image, inside the container.
   const outputPath = page.getByTestId("single-output-path");
