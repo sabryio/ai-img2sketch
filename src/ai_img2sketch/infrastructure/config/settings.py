@@ -43,6 +43,14 @@ class ApiSettings(BaseSettings):
             "can read (the container's /app/media mount)"
         ),
     )
+    output_dir: Path = Field(
+        default=Path("output"),
+        alias="APP_OUTPUT_DIR",
+        description=(
+            "Directory the server may write videos into and serve back from; the "
+            "container's /app/output mount"
+        ),
+    )
 
 
 def load_settings() -> ApiSettings:

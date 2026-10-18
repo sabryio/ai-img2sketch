@@ -3,7 +3,6 @@ import {
   ChevronDown,
   ChevronUp,
   FileQuestion,
-  Folder,
   Hand,
   Sliders,
   SlidersHorizontal,
@@ -13,18 +12,12 @@ import type { SketchOptions } from "../rpc/contract";
 import { useStoreMedia } from "../hooks";
 import { toAppError } from "../lib/errors";
 import { stageFiles } from "../lib/media";
-import {
-  isTauriEnvironment,
-  pickImageFile,
-  pickOutputDirectory,
-} from "../lib/tauri";
+import { pickImageFile } from "../lib/tauri";
 import { useNotificationsStore } from "../stores/notifications";
 
 interface AdvancedConfigFormProps {
   config: SketchOptions;
   onChangeConfig: (newConfig: SketchOptions) => void;
-  outputDir: string;
-  onChangeOutputDir: (dir: string) => void;
   objectMaskPath?: string;
   onChangeObjectMaskPath?: (path: string) => void;
   handImagePath?: string;
@@ -37,8 +30,6 @@ interface AdvancedConfigFormProps {
 export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   config,
   onChangeConfig,
-  outputDir,
-  onChangeOutputDir,
   objectMaskPath = "",
   onChangeObjectMaskPath,
   handImagePath = "",
@@ -51,8 +42,6 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   const [showRarelyTouched, setShowRarelyTouched] = useState(false);
   const addToast = useNotificationsStore((state) => state.addToast);
   const storeMedia = useStoreMedia();
-  /** Only the desktop shell can hand over a folder the backend may write to. */
-  const isDesktop = isTauriEnvironment();
 
   const updateField = <K extends keyof SketchOptions>(
     key: K,
@@ -62,13 +51,6 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
       ...config,
       [key]: value,
     });
-  };
-
-  const handlePickOutputDir = async () => {
-    const picked = await pickOutputDirectory("Select Output Directory");
-    if (picked) {
-      onChangeOutputDir(picked);
-    }
   };
 
   /**
@@ -148,55 +130,6 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
 
       {isOpen && (
         <div className="p-4 sm:p-5 space-y-5 border-t border-zinc-800/80">
-          {/* Output Directory Field (Visible but optional) */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-semibold text-zinc-300">
-              Output Directory (Optional)
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={outputDir}
-                onChange={(e) => onChangeOutputDir(e.target.value)}
-                placeholder="Leave blank for default (e.g. ./output)"
-                className="flex-1 px-3 py-2 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
-              />
-              {isDesktop && (
-                <button
-                  type="button"
-                  onClick={handlePickOutputDir}
-                  className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1.5 transition-colors border border-zinc-700"
-                  title="Browse folder"
-                >
-                  <Folder className="w-3.5 h-3.5" />
-                  Browse
-                </button>
-              )}
-              {outputDir && (
-                <button
-                  type="button"
-                  onClick={() => onChangeOutputDir("")}
-                  className="p-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors"
-                  title="Clear"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-            <p className="text-[11px] text-zinc-500">
-              Where generated MP4 files are written. In Docker mode, mapped to{" "}
-              <code className="font-mono text-zinc-400">/app/output</code>.
-            </p>
-            {!isDesktop && (
-              <p className="text-[11px] text-zinc-500">
-                Type the folder the backend writes into (e.g.{" "}
-                <code className="font-mono text-zinc-400">./output/batch</code>
-                ). A browser cannot pick a host folder the server can write to —
-                the desktop app adds that picker.
-              </p>
-            )}
-          </div>
-
           {/* Primary Numeric Parameters Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {/* frame_rate: 1-120 (default 25) */}

@@ -1,4 +1,5 @@
-import { readdirSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
   BATCH_DIR,
@@ -6,13 +7,19 @@ import {
   EMPTY_DIR,
   ensureFixtures,
   OUTPUT_DIR,
+  OUTPUT_ROOT,
   toPosix,
   uiPath,
 } from "./fixtures";
-import { openEventLog, openWorkspace } from "./helpers";
+import { openEventLog, openWorkspace, stubSavePicker } from "./helpers";
 
 test.beforeAll(() => {
   ensureFixtures();
+});
+
+// The save dialog is native and cannot be driven; the fallback download can.
+test.beforeEach(async ({ page }) => {
+  await stubSavePicker(page);
 });
 
 test("processes a folder into the requested output directory", async ({
@@ -22,16 +29,13 @@ test("processes a folder into the requested output directory", async ({
   await page.getByRole("button", { name: "Batch Processing" }).click();
 
   await page.fill("#batch-input-dir", uiPath(BATCH_DIR));
-  // `output_dir` is optional and lives behind the advanced section. A relative
-  // `./output/...` is inside the compose mount, so the app rewrites it to
-  // `/app/output/...` for the container; asking for it here proves that path
-  // reaches the request.
-  await page
-    .getByRole("button", { name: /Advanced Options & Parameters/ })
-    .click();
-  await page
-    .getByPlaceholder("Leave blank for default (e.g. ./output)")
-    .fill(uiPath(OUTPUT_DIR));
+  // `output_dir` is optional and sits in the main card. A relative `./output/...`
+  // is inside the compose mount, so the app rewrites it to `/app/output/...` for
+  // the container; asking for it here proves that path reaches the request.
+  await page.fill("#batch-output-dir", uiPath(OUTPUT_DIR));
+  await expect(page.getByTestId("output-plan")).toContainText(
+    "/app/output/e2e",
+  );
 
   await page.getByRole("button", { name: "Run Batch Generation" }).click();
 
@@ -52,6 +56,19 @@ test("processes a folder into the requested output directory", async ({
     name.endsWith(".mp4"),
   );
   expect(produced).toHaveLength(2);
+
+  // One produced video can be fetched back — this time from the output volume,
+  // which is a different root than the media volume the other specs download
+  // from.
+  const [download] = await Promise.all([
+    page.waitForEvent("download"),
+    rows.first().getByTestId("batch-download").click(),
+  ]);
+  expect(download.suggestedFilename()).toMatch(/\.mp4$/);
+
+  const savedAs = join(OUTPUT_ROOT, "downloaded-batch-item.mp4");
+  await download.saveAs(savedAs);
+  expect(statSync(savedAs).size).toBeGreaterThan(0);
 
   await expect(page.getByTestId("sse-badge")).toContainText("SSE Live");
   await openEventLog(page);

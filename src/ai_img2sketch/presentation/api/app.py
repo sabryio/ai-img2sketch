@@ -18,8 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ...infrastructure.config.settings import ApiSettings, load_settings
 from ...infrastructure.events.async_event_bus import AsyncEventBus
+from ...infrastructure.storage.artifact_reader import VolumeArtifactReader
 from ...infrastructure.storage.media_store import MediaStore
 from .routers import (
+    create_artifacts_router,
     create_events_router,
     create_health_router,
     create_media_router,
@@ -79,6 +81,12 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     )
     app.include_router(create_health_router(), prefix=_API_PREFIX)
     app.include_router(create_media_router(MediaStore(settings.media_dir)), prefix=_API_PREFIX)
+    # Downloads are confined to the volumes the API writes into, so a client can
+    # fetch what it asked the backend to produce and nothing else.
+    app.include_router(
+        create_artifacts_router(VolumeArtifactReader([settings.media_dir, settings.output_dir])),
+        prefix=_API_PREFIX,
+    )
     app.include_router(create_sketches_router(publisher=event_bus), prefix=_API_PREFIX)
     app.include_router(create_events_router(event_stream=event_bus), prefix=_API_PREFIX)
     return app

@@ -16,6 +16,8 @@ services:
       # Uploads picked in the webview are staged in the mounted media volume,
       # so the path the API returns is immediately readable by the container.
       APP_MEDIA_DIR: /app/media
+      # Downloads are confined to these two volumes.
+      APP_OUTPUT_DIR: /app/output
       APP_CORS_ORIGINS: >
         ["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]
     volumes:

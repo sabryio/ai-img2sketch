@@ -9,6 +9,7 @@
  */
 
 import { IMAGE_ACCEPT } from "./media";
+import { getBasename } from "./paths";
 
 export function isTauriEnvironment(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -335,4 +336,132 @@ export async function convertPathToAssetUrl(filePath: string): Promise<string> {
   }
 
   return filePath;
+}
+
+/** Result of handing a produced file to the user's machine. */
+export interface SaveOutcome {
+  /** False only when the user dismissed the picker. */
+  saved: boolean;
+  /** Where it went: the picked path, or the name the browser was given. */
+  destination: string;
+  /** True when the browser's own download UI took over (no path chosen here). */
+  viaBrowserDownload?: boolean;
+}
+
+interface SaveFilePickerHandle {
+  name: string;
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+}
+
+type SaveFilePicker = (options?: {
+  suggestedName?: string;
+}) => Promise<SaveFilePickerHandle>;
+
+/**
+ * `window.showSaveFilePicker`, where the browser has it (Chromium, in a secure
+ * context). Not in `lib.dom` everywhere yet, hence the narrow local shape.
+ */
+function saveFilePicker(): SaveFilePicker | null {
+  const candidate = (window as unknown as { showSaveFilePicker?: unknown })
+    .showSaveFilePicker;
+  return typeof candidate === "function" ? (candidate as SaveFilePicker) : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+/** Hand the bytes to the browser's download UI, which owns the destination. */
+function browserDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  // Revoking too early cancels the download in some browsers.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/**
+ * Save a downloaded video where the user wants it.
+ *
+ * The desktop shell asks for a path and writes the bytes there (the only way to
+ * target a host folder). A browser asks with its own save dialog when it can,
+ * and otherwise falls back to a plain download — the browser's download UI, with
+ * whatever destination the user configured, because a page cannot write to an
+ * arbitrary host path on its own.
+ */
+export async function saveArtifactBlob(
+  blob: Blob,
+  suggestedName: string,
+): Promise<SaveOutcome> {
+  if (isTauriEnvironment()) {
+    try {
+      const { save } = await import("@tauri-apps/plugin-dialog");
+      const target = await save({ defaultPath: suggestedName });
+      if (!target) {
+        return { saved: false, destination: "" };
+      }
+
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      await writeFile(target, new Uint8Array(await blob.arrayBuffer()));
+      return { saved: true, destination: target };
+    } catch (err) {
+      console.error("Could not save the video", err);
+      return { saved: false, destination: "" };
+    }
+  }
+
+  const picker = saveFilePicker();
+  if (picker) {
+    try {
+      const handle = await picker({ suggestedName });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { saved: true, destination: handle.name };
+    } catch (err) {
+      if (isAbortError(err)) {
+        return { saved: false, destination: "" };
+      }
+      // The picker exists but refused (permissions, sandbox): a plain download
+      // still gets the file to the user.
+      console.warn("Save picker unavailable, downloading instead", err);
+    }
+  }
+
+  browserDownload(blob, suggestedName);
+  return { saved: true, destination: suggestedName, viaBrowserDownload: true };
+}
+
+/**
+ * Copy a produced file into a host folder the backend cannot write to itself.
+ *
+ * Desktop only — it is the one place where "render in the volume, then put it
+ * where the user asked" needs no dialog per file. A browser returns `false` and
+ * the UI offers a download instead.
+ */
+export async function exportArtifactToHostFolder(
+  sourcePath: string,
+  directory: string,
+): Promise<boolean> {
+  if (!isTauriEnvironment()) {
+    return false;
+  }
+
+  const folder = directory.replace(/[\\/]+$/, "");
+  try {
+    const { copyFile, mkdir } = await import("@tauri-apps/plugin-fs");
+    await mkdir(folder, { recursive: true });
+    await copyFile(sourcePath, `${folder}/${getBasename(sourcePath)}`);
+    return true;
+  } catch (err) {
+    console.error("tauri-plugin-fs export failed", err);
+    return false;
+  }
 }

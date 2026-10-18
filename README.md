@@ -312,6 +312,10 @@ curl -X POST http://localhost:8000/api/v1/sketches \
 
 # Stream lifecycle events (initial ack -> id'd event frames -> close)
 curl -N http://localhost:8000/api/v1/events
+
+# Fetch a produced video back (the path the sketch call reported)
+curl -o sketch.mp4 \
+  'http://localhost:8000/api/v1/artifacts/download?path=/app/output/sketch.mp4'
 ```
 
 - `docs/api.md` — complete API reference for humans and agents: schemas,
@@ -339,6 +343,7 @@ ai-img2sketch/
 │   │       └── video_config.py   # Video configuration
 │   ├── application/               # Application layer
 │   │   ├── ports/                # Interfaces the app depends on
+│   │   │   ├── artifact_reader.py
 │   │   │   ├── blob_store.py
 │   │   │   ├── image_loader.py
 │   │   │   ├── hand_loader.py
@@ -368,6 +373,7 @@ ai-img2sketch/
 │   │   ├── events/
 │   │   │   └── async_event_bus.py        # In-process pub/sub backing SSE
 │   │   ├── storage/
+│   │   │   ├── artifact_reader.py  # VolumeArtifactReader: serves produced files
 │   │   │   └── media_store.py    # MediaStore: stages client uploads in the volume
 │   │   ├── config/
 │   │   │   └── settings.py        # ApiSettings (APP_* environment variables)
@@ -382,7 +388,7 @@ ai-img2sketch/
 │   │       ├── settings.py       # ApiSettings re-export
 │   │       ├── schemas.py        # Request/response DTOs
 │   │       ├── __main__.py       # img2sketch-api console entry point
-│   │       └── routers/          # health.py, media.py, sketches.py, events.py (SSE)
+│   │       └── routers/          # health.py, media.py, artifacts.py, sketches.py, events.py (SSE)
 │   └── resources/                 # Bundled package data
 │       └── images/                # Default hand image + mask (shipped in the wheel)
 │           ├── drawing-hand.png

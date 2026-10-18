@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
   Copy,
+  Download,
   FileImage,
   Film,
   FolderOpen,
@@ -15,21 +16,27 @@ import {
 } from "lucide-react";
 import { useElapsed, useGenerateSketch, useStoreMedia } from "../hooks";
 import type { SketchOptions } from "../rpc/contract";
+import { fetchArtifact } from "../rpc/artifacts";
 import { toAppError } from "../lib/errors";
 import { stageFiles } from "../lib/media";
 import {
+  getBasename,
   mapBackendPathToHost,
   mapHostPathToBackend,
-  mapOutputDirToBackend,
+  planOutput,
 } from "../lib/paths";
 import {
   convertPathToAssetUrl,
   copyHostFile,
+  exportArtifactToHostFolder,
+  isTauriEnvironment,
   pickImageFile,
+  saveArtifactBlob,
 } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
+import { OutputFolderField } from "./OutputFolderField";
 
 interface SingleSketchViewProps {
   /** False once the backend stops answering; the form is then disabled. */
@@ -59,19 +66,61 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   const [errorDismissed, setErrorDismissed] = useState(false);
   /** True while a browser-picked file is being uploaded to the media volume. */
   const [isStaging, setIsStaging] = useState(false);
+  /** True while a produced video is being fetched and handed to the user. */
+  const [isDownloading, setIsDownloading] = useState(false);
   const [videoAssetUrl, setVideoAssetUrl] = useState<string>("");
   const [videoFailedToLoad, setVideoFailedToLoad] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
   const [copiedError, setCopiedError] = useState<boolean>(false);
 
+  /**
+   * Where the video ends up. Empty means the backend writes beside the image;
+   * a folder outside the volumes is exported by the desktop app after the
+   * render (see `planOutput`).
+   */
+  const outputPlan = useMemo(
+    () => planOutput(outputDir, mode, isTauriEnvironment()),
+    [outputDir, mode],
+  );
+
+  /**
+   * Hand a finished video to the folder the user asked for when the backend
+   * could not write there itself.
+   */
+  const exportResult = async (backendOutputPath: string): Promise<void> => {
+    if (!outputPlan.exportDir) {
+      return;
+    }
+
+    const exported = await exportArtifactToHostFolder(
+      mapBackendPathToHost(backendOutputPath, mode, pathConfig),
+      outputPlan.exportDir,
+    );
+
+    addToast(
+      exported
+        ? {
+            type: "success",
+            title: "Video Exported",
+            message: `Copied to ${outputPlan.exportDir}`,
+          }
+        : {
+            type: "error",
+            title: "Could not export the video",
+            message: `Failed to copy the video into ${outputPlan.exportDir}. Use Download to save it instead.`,
+          },
+    );
+  };
+
   const sketch = useGenerateSketch({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       const hostPath = mapBackendPathToHost(data.output_path, mode, pathConfig);
       addToast({
         type: "success",
         title: "Sketch Video Generated",
         message: `Video saved to ${hostPath}`,
       });
+      await exportResult(data.output_path);
     },
     onError: (error) => {
       const appError = toAppError(error, mode);
@@ -191,9 +240,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
     try {
       await sketch.mutateAsync({
         image_path: backendImagePath,
-        output_dir: outputDir.trim()
-          ? mapOutputDirToBackend(outputDir.trim(), mode, pathConfig)
-          : undefined,
+        output_dir: outputPlan.backendOutputDir,
         object_mask_path: objectMaskPath.trim()
           ? objectMaskPath.trim()
           : undefined,
@@ -205,6 +252,43 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
       });
     } catch {
       // Surfaced through the mutation's `onError` and the error card below.
+    }
+  };
+
+  /** Fetch the produced video from the backend and save it where asked. */
+  const handleDownload = async () => {
+    if (!result || isDownloading) {
+      return;
+    }
+
+    setIsDownloading(true);
+    try {
+      const blob = await fetchArtifact(result.output_path);
+      const outcome = await saveArtifactBlob(
+        blob,
+        getBasename(result.output_path),
+      );
+      if (!outcome.saved) {
+        return;
+      }
+
+      addToast({
+        type: outcome.viaBrowserDownload ? "info" : "success",
+        title: outcome.viaBrowserDownload ? "Download Started" : "Video Saved",
+        message: outcome.viaBrowserDownload
+          ? `${outcome.destination} — the browser chose the folder.`
+          : `Saved to ${outcome.destination}`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Download Failed",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -332,14 +416,21 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
               </div>
             </div>
           )}
+          {/* Where the produced video should go (default: beside the image) */}
+          <div className="pt-3 border-t border-zinc-800/80">
+            <OutputFolderField
+              id="single-output-dir"
+              value={outputDir}
+              onChange={setOutputDir}
+              plan={outputPlan}
+            />
+          </div>
         </div>
 
         {/* Collapsible Advanced Configuration Form */}
         <AdvancedConfigForm
           config={config}
           onChangeConfig={setConfig}
-          outputDir={outputDir}
-          onChangeOutputDir={setOutputDir}
           objectMaskPath={objectMaskPath}
           onChangeObjectMaskPath={setObjectMaskPath}
           handImagePath={handImagePath}
@@ -452,11 +543,26 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
       {/* Generation Result & Video Preview Section */}
       {result && (
         <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl space-y-5 animate-fade-in">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
               <CheckCircle2 className="w-5 h-5" />
               Sketch Video Generated Successfully
             </div>
+
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={isDownloading}
+              data-testid="single-download"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
+            >
+              {isDownloading ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              {isDownloading ? "Preparing…" : "Download MP4"}
+            </button>
           </div>
 
           {/* Video Player or Fallback */}

@@ -4,6 +4,7 @@ import {
   mapBackendPathToHost,
   mapHostPathToBackend,
   mapOutputDirToBackend,
+  planOutput,
 } from "./paths";
 
 describe("Paths Mapping Unit Tests (Docker vs Sidecar)", () => {
@@ -119,7 +120,61 @@ describe("Output directory mapping", () => {
     );
   });
 
+  it("maps a folder beside the image, which is the default location", () => {
+    expect(mapOutputDirToBackend("./media/batch/runs", "docker")).toBe(
+      "/app/media/batch/runs",
+    );
+    expect(mapOutputDirToBackend("media", "docker")).toBe("/app/media");
+  });
+
   it("does not redirect a directory outside the mount", () => {
     expect(mapOutputDirToBackend("D:/renders", "docker")).toBe("D:/renders");
+  });
+});
+
+describe("Output planning", () => {
+  const customConfig = {
+    projectRoot: "/my/project",
+    mediaSubdir: "media",
+    outputSubdir: "output",
+  };
+
+  it("sends nothing when the folder is empty, which means 'beside the image'", () => {
+    expect(planOutput("  ", "docker", false)).toEqual({});
+    expect(planOutput("", "sidecar", true)).toEqual({});
+  });
+
+  it("hands the backend a folder inside either volume", () => {
+    expect(planOutput("./output/runs", "docker", false)).toEqual({
+      backendOutputDir: "/app/output/runs",
+    });
+    expect(planOutput("./media/runs", "docker", false)).toEqual({
+      backendOutputDir: "/app/media/runs",
+    });
+    expect(planOutput("/app/output/runs", "docker", true)).toEqual({
+      backendOutputDir: "/app/output/runs",
+    });
+    expect(planOutput("/my/project/output/runs", "docker", false, customConfig))
+      .toEqual({ backendOutputDir: "/app/output/runs" });
+  });
+
+  it("lets a native backend write any host folder directly", () => {
+    expect(planOutput("D:/renders", "sidecar", false)).toEqual({
+      backendOutputDir: "D:/renders",
+    });
+  });
+
+  it("exports to a host folder the container cannot reach, in the desktop app", () => {
+    expect(planOutput("D:/renders", "docker", true)).toEqual({
+      exportDir: "D:/renders",
+      note: "exported",
+    });
+  });
+
+  it("asks the user to download instead when no host copy is possible", () => {
+    expect(planOutput("D:/renders", "docker", false)).toEqual({
+      exportDir: "D:/renders",
+      note: "download",
+    });
   });
 });

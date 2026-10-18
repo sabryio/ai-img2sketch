@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Download,
   Film,
   Folder,
   FolderOpen,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useElapsed, useGenerateBatch, useStoreMedia } from "../hooks";
 import type { BatchItem, SketchOptions } from "../rpc/contract";
+import { fetchArtifact } from "../rpc/artifacts";
 import { toAppError } from "../lib/errors";
 import {
   IMAGE_EXTENSIONS,
@@ -23,14 +25,22 @@ import {
   stageFiles,
 } from "../lib/media";
 import {
+  getBasename,
   mapBackendPathToHost,
   mapHostPathToBackend,
-  mapOutputDirToBackend,
+  planOutput,
 } from "../lib/paths";
-import { convertPathToAssetUrl, pickImageDirectory } from "../lib/tauri";
+import {
+  convertPathToAssetUrl,
+  exportArtifactToHostFolder,
+  isTauriEnvironment,
+  pickImageDirectory,
+  saveArtifactBlob,
+} from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
+import { OutputFolderField } from "./OutputFolderField";
 
 interface BatchSketchViewProps {
   /** False once the backend stops answering; the form is then disabled. */
@@ -69,20 +79,66 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
   const [errorDismissed, setErrorDismissed] = useState(false);
   /** True while a browser-picked folder is being uploaded to the media volume. */
   const [isStaging, setIsStaging] = useState(false);
+  /** Backend path of the row currently being downloaded, `""` when idle. */
+  const [downloadingPath, setDownloadingPath] = useState<string>("");
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{
     image: string;
     path: string;
     assetUrl: string;
   } | null>(null);
 
+  /**
+   * Where the videos end up. Empty means the backend writes beside each image;
+   * a folder outside the volumes is exported by the desktop app after the run.
+   */
+  const outputPlan = useMemo(
+    () => planOutput(outputDir, mode, isTauriEnvironment()),
+    [outputDir, mode],
+  );
+
+  /**
+   * Hand every produced video to the folder the user asked for when the backend
+   * could not write there itself — one toast for the run, not one per file.
+   */
+  const exportResults = async (backendOutputPaths: string[]): Promise<void> => {
+    const exportDir = outputPlan.exportDir;
+    if (!exportDir || backendOutputPaths.length === 0) {
+      return;
+    }
+
+    const copied = await Promise.all(
+      backendOutputPaths.map((backendPath) =>
+        exportArtifactToHostFolder(
+          mapBackendPathToHost(backendPath, mode, pathConfig),
+          exportDir,
+        ),
+      ),
+    );
+    const exported = copied.filter(Boolean).length;
+
+    addToast({
+      type: exported === copied.length ? "success" : "warning",
+      title:
+        exported === copied.length
+          ? "Videos Exported"
+          : "Some Videos Were Not Exported",
+      message: `${exported}/${copied.length} videos copied to ${exportDir}.`,
+    });
+  };
+
   const batch = useGenerateBatch({
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       const summary = summarize(data.items);
       addToast({
         type: summary.failed > 0 ? "warning" : "success",
         title: "Batch Completed",
         message: `Processed ${summary.total} files: ${summary.succeeded} succeeded, ${summary.failed} failed.`,
       });
+      await exportResults(
+        data.items
+          .map((item) => item.output_path)
+          .filter((path): path is string => Boolean(path)),
+      );
     },
     onError: (error) => {
       const appError = toAppError(error, mode);
@@ -178,13 +234,48 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
     try {
       await batch.mutateAsync({
         input_dir: backendInputDir,
-        output_dir: outputDir.trim()
-          ? mapOutputDirToBackend(outputDir.trim(), mode, pathConfig)
-          : undefined,
+        output_dir: outputPlan.backendOutputDir,
         config,
       });
     } catch {
       // Surfaced through the mutation's `onError` and the error banner below.
+    }
+  };
+
+  /** Fetch one produced video from the backend and save it where asked. */
+  const handleDownloadItem = async (item: BatchItem) => {
+    if (!item.output_path || downloadingPath) {
+      return;
+    }
+
+    setDownloadingPath(item.output_path);
+    try {
+      const blob = await fetchArtifact(item.output_path);
+      const outcome = await saveArtifactBlob(
+        blob,
+        getBasename(item.output_path),
+      );
+      if (!outcome.saved) {
+        return;
+      }
+
+      addToast({
+        type: outcome.viaBrowserDownload ? "info" : "success",
+        title: outcome.viaBrowserDownload ? "Download Started" : "Video Saved",
+        message: outcome.viaBrowserDownload
+          ? `${outcome.destination} — the browser chose the folder.`
+          : `Saved to ${outcome.destination}`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Download Failed",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setDownloadingPath("");
     }
   };
 
@@ -291,14 +382,21 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
               </div>
             </div>
           )}
+          {/* Where the produced videos should go (default: beside each image) */}
+          <div className="pt-3 border-t border-zinc-800/80">
+            <OutputFolderField
+              id="batch-output-dir"
+              value={outputDir}
+              onChange={setOutputDir}
+              plan={outputPlan}
+            />
+          </div>
         </div>
 
         {/* Collapsible Advanced Configuration Form */}
         <AdvancedConfigForm
           config={config}
           onChangeConfig={setConfig}
-          outputDir={outputDir}
-          onChangeOutputDir={setOutputDir}
           isBatchMode={true}
         />
 
@@ -477,14 +575,32 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
                       {/* Action Column */}
                       <td className="py-3 px-4 text-right whitespace-nowrap">
                         {!hasError && item.output_path ? (
-                          <button
-                            type="button"
-                            onClick={() => handlePreviewItem(item)}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-sans text-xs transition-colors border border-indigo-500/30"
-                          >
-                            <Film className="w-3.5 h-3.5" />
-                            Preview
-                          </button>
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handlePreviewItem(item)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-sans text-xs transition-colors border border-indigo-500/30"
+                            >
+                              <Film className="w-3.5 h-3.5" />
+                              Preview
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDownloadItem(item)}
+                              disabled={Boolean(downloadingPath)}
+                              data-testid="batch-download"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 font-sans text-xs transition-colors border border-zinc-700"
+                            >
+                              {downloadingPath === item.output_path ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Download className="w-3.5 h-3.5" />
+                              )}
+                              {downloadingPath === item.output_path
+                                ? "Preparing…"
+                                : "Download"}
+                            </button>
+                          </div>
                         ) : (
                           <span className="text-zinc-600 text-[11px]">—</span>
                         )}

@@ -154,9 +154,38 @@ The path is absolute **as the server sees it**; use it verbatim as
 
 ---
 
+## `GET /api/v1/artifacts/download`
+
+Fetch the bytes of a file the backend produced — the read-side counterpart of
+`POST /media`.
+
+Videos are rendered inside the backend's volumes (`<APP_MEDIA_DIR>` when they
+are written beside their image, `<APP_OUTPUT_DIR>` when `output_dir` asked for a
+folder), and a browser cannot read those paths. This endpoint hands the file
+over so the client can save it wherever the user wants: the desktop app writes
+it to a path from a native save dialog, a browser to its own download location.
+
+| Query | Type | Required | Notes |
+|---|---|---|---|
+| `path` | string | yes | Path **as a previous response reported it** (e.g. `SketchResult.output_path`) |
+
+```bash
+curl -s -o sketch.mp4 \
+  'http://localhost:8000/api/v1/artifacts/download?path=/app/output/sketch.mp4'
+```
+
+Responds with the file itself (`application/octet-stream`,
+`Content-Disposition: attachment; filename="<name>"`) plus `Content-Length`,
+`Last-Modified` and `ETag`. Reads are confined to `<APP_MEDIA_DIR>` and
+`<APP_OUTPUT_DIR>`: containment is checked on the *resolved* path, so a symlink
+or a `..` that escapes a volume is refused like any other outside path.
+
+---
+
 ## Error mapping
 
-Shared by both POST endpoints and mirrored in the SSE failure events.
+Shared by the request/response endpoints and mirrored in the SSE failure events.
+For the download above, only the `404` and `422` rows apply.
 
 | Status | Trigger | Example detail |
 |---|---|---|
@@ -253,7 +282,8 @@ Anonymous comments (`: \n\n`) are handled by the browser and never dispatched.
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port (1–65535) |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
-| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`); must be the path the server can read (the container sets `/app/media`) |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; must be the path the server can read (the container sets `/app/media`) |
+| `APP_OUTPUT_DIR` | `output` | Directory the server writes `output_dir` videos into and may serve back from (the container sets `/app/output`) |
 | `APP_CORS_ORIGINS` | `["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]` | JSON list of allowed CORS origins |
 
 CORS allows credentials and all methods/headers for the listed origins; the

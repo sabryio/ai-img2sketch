@@ -68,6 +68,7 @@ uv run img2sketch-api        # or: uv run uvicorn ai_img2sketch.presentation.api
 |---|---|---|
 | `/api/v1/health` | GET | Liveness probe (`{"status": "ok"}`) |
 | `/api/v1/media` | POST | Stage a client-uploaded image so the backend can read it |
+| `/api/v1/artifacts/download` | GET | Fetch a produced video by the path the backend reported |
 | `/api/v1/sketches` | POST | Generate one sketch video from an image |
 | `/api/v1/sketches/batch` | POST | Generate one video per image in a directory |
 | `/api/v1/events` | GET | SSE stream of `sketch.*` / `batch.*` lifecycle events |
@@ -138,6 +139,12 @@ the CLI and the Tauri app loses nothing.
 The compose file mounts `./media` → `/app/media` (client files) and
 `./output` → `/app/output` (generated videos). Reference those container paths
 in `image_path` / `input_dir` / `output_dir`.
+
+A folder outside those two volumes cannot be written by the container. The
+desktop shell handles that in two steps: it renders beside the image (no
+`output_dir` sent) and then copies the produced file into the requested host
+folder with `tauri-plugin-fs` — or saves it through the native save dialog when
+the user asks for it. See "Picking files" in `frontend/README.md`.
 
 ## SSE Event Streaming
 
@@ -262,7 +269,8 @@ in the UI:
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
-| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`); the image sets `/app/media`, the mounted volume |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; the image sets `/app/media`, the mounted volume |
+| `APP_OUTPUT_DIR` | `output` | Directory `output_dir` videos are written to and may be downloaded from; the image sets `/app/output`, the mounted volume |
 | `APP_CORS_ORIGINS` | Tauri origins | JSON list of allowed CORS origins |
 
 ## Health Checks

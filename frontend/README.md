@@ -42,6 +42,10 @@ src/components/*      render only; they never call `fetch`
   `POST /api/v1/media`, `GET /api/v1/health`. Request/response DTOs are inferred
   from the contract, so a backend schema change that is not mirrored here fails
   `tsc`.
+- **Downloads** — `GET /api/v1/artifacts/download`, the one call whose body *is*
+  the result. `src/rpc/artifacts.ts` owns the URL it builds and reports failures
+  as the same `ORPCError` the contract raises, so `toAppError` still renders them
+  (a component never builds a URL, and no video is base64-encoded into JSON).
 - **SSE** — `GET /api/v1/events`, opened by `App.tsx`, which owns both
   subscriptions and passes derived state down:
   - `useLatestEvent()` — a **live query**: `data` is the newest event, plus
@@ -79,9 +83,22 @@ server from a store.
 the user can see what the backend will actually read. A path that is **already**
 inside `./media` keeps its subpath and needs no copy; a file from anywhere else
 is copied into the mounted media directory before the request, and a failed copy
-aborts with a toast instead of turning into a confusing `404`. `output_dir` goes
-through the same mapping, so `./output/runs` reaches the container as
-`/app/output/runs`.
+aborts with a toast instead of turning into a confusing `404`.
+
+The **Output Folder** field sits in the main card, not behind the advanced
+section, because its default is the interesting part: leave it empty and every
+video is written next to its own image (the backend's own default). Typing a
+folder maps it the same way (`./output/runs` → `/app/output/runs`, and
+`./media/runs` → `/app/media/runs`), and the line under the field states where
+the videos will actually land before anything is submitted.
+
+A folder **outside** the volumes is the one thing the container cannot write to.
+`planOutput()` splits that case in two, and the field says which applies:
+
+- **Desktop app** — render beside the image, then copy the finished file into the
+  requested folder with `tauri-plugin-fs` (`exportDir`).
+- **Browser** — render beside the image and offer the Download button, because a
+  page cannot write to a host path on its own.
 
 Both the desktop app and a browser default to `docker`: it is the mode the
 service ships in, and it is what the API expects (the container only reads the
@@ -104,9 +121,21 @@ they can only hand over different things:
 
 Either way the form field ends up holding a path the backend can open — never an
 invented one. The same rule applies to the optional mask/hand images in the
-advanced section. The one control a browser cannot offer is the output-directory
-picker (it would need to name a folder the *server* writes to), so that button is
-desktop-only there and the field stays typeable.
+advanced section.
+
+### Downloading results
+
+The backend writes inside its volumes, so the video the API reports lives on a
+path a browser cannot read. Each result therefore has a **Download** button
+(single view and every batch row) that fetches the file from
+`GET /api/v1/artifacts/download` and hands it to the user:
+
+- **Desktop app** — the native save dialog asks for a path, and Tauri writes the
+  bytes there: the only way to target an arbitrary host folder.
+- **Browser** — `showSaveFilePicker` when the browser has it (Chromium, secure
+  context), so the folder is still chosen by the user; otherwise a plain download
+  through the browser's own download UI. Cancelling either leaves the video
+  untouched and shows nothing.
 
 ## Runtime configuration
 
@@ -125,7 +154,7 @@ desktop-only there and the field stays typeable.
 - `src/**/*.test.ts` — Vitest, no DOM: type-level locks on the hooks (a wrapper
   that collapses oRPC generics to `unknown` compiles, so `tsc` is the assertion),
   plus pure logic (`errors`, `notifications`, `paths`, `media`, `contract`,
-  `toSseState`).
+  `artifacts`, `toSseState`).
 - `e2e/*.spec.ts` — Playwright against the real stack: the Docker backend
   (`docker compose up -d`, reused when it is already running) and a real
   Chromium. It drives the UI, asserts on the MP4 files written on disk, and
@@ -136,7 +165,10 @@ desktop-only there and the field stays typeable.
   suite never touches the rest of `media/` or `output/`. `e2e/upload.spec.ts`
   additionally drives the real file dialog (Playwright's `filechooser`), so the
   browser upload path is covered end to end; it wipes `media/uploads/` first,
-  which is where the app stages those picks. Run
+  which is where the app stages those picks. `e2e/download.spec.ts` captures a
+  real download (via the `stubSavePicker` helper in `e2e/helpers.ts`: the native
+  save dialog cannot be driven, so the spec exercises the browser fallback) and
+  checks the bytes on disk are an MP4. Run
   `docker compose build` first when the backend changed — an already-running
   container is reused, so a stale image would otherwise be under test.
 

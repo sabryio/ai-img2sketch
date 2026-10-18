@@ -20,3 +20,18 @@ export async function openEventLog(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByTestId("event-log")).toBeVisible();
 }
+
+/**
+ * Remove the browser's own save dialog before the app loads.
+ *
+ * `showSaveFilePicker` opens a native window Playwright cannot drive; without it
+ * the app falls back to a plain download, which a test can capture.
+ */
+export async function stubSavePicker(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "showSaveFilePicker", {
+      value: undefined,
+      configurable: true,
+    });
+  });
+}

@@ -126,14 +126,40 @@ export function mapHostPathToBackend(
 }
 
 /**
+ * The two volumes the container mounts, as `[host dir, container dir]` pairs.
+ */
+function mountPairs(config: PathConfig): Array<[string, string]> {
+  return [
+    [joinFragments(config.projectRoot, config.mediaSubdir), "/app/media"],
+    [joinFragments(config.projectRoot, config.outputSubdir), "/app/output"],
+  ];
+}
+
+/**
+ * Maps a path that is already inside one of the mounts to its container form,
+ * or `null` when it is inside neither. Both mounts count: videos are written
+ * beside their image (`./media/...`) by default, and into `./output/...` when
+ * the user asks for it.
+ */
+function mapInsideMounts(norm: string, config: PathConfig): string | null {
+  for (const [hostDir, containerDir] of mountPairs(config)) {
+    const relative = relativeInside(norm, hostDir);
+    if (relative !== null) {
+      return relative ? joinFragments(containerDir, relative) : containerDir;
+    }
+  }
+  return null;
+}
+
+/**
  * Converts an output directory to the path the backend should write to.
  *
- * Docker mode can only write inside `/app/output`, so a relative `./output/...`
- * (the documented default) or an absolute `<project-root>/output/...` becomes
- * `/app/output/...`, and a container path is kept as-is. A directory outside the
- * mount is passed through unchanged: the UI does not silently redirect a
- * location the user never staged into the volume, so the request fails loudly
- * instead of writing somewhere unexpected.
+ * Docker mode can only write inside its volumes, so a relative `./output/...`
+ * (the documented default), an absolute `<project-root>/output/...` or a folder
+ * beside the image (`./media/...`) becomes its `/app/...` form, and a container
+ * path is kept as-is. A folder outside the volumes is also passed through
+ * unchanged: the UI does not silently redirect a location the user never staged
+ * into the container (see {@link planOutput}, which decides what to do about it).
  */
 export function mapOutputDirToBackend(
   outputDir: string,
@@ -145,16 +171,75 @@ export function mapOutputDirToBackend(
     return norm;
   }
 
-  if (norm === "/app/output" || norm.startsWith("/app/output/")) {
+  // Already addressed the way the container sees it.
+  if (norm === "/app" || norm.startsWith("/app/")) {
     return norm;
   }
 
-  const hostOutputDir = joinFragments(config.projectRoot, config.outputSubdir);
-  const relative = relativeInside(norm, hostOutputDir);
-  if (relative === null) {
-    return norm;
+  return mapInsideMounts(norm, config) ?? norm;
+}
+
+/** Why a typed output folder is not handed to the backend as `output_dir`. */
+export type OutputNote =
+  /** Outside the volumes: render in the volume, the desktop app copies it out. */
+  | "exported"
+  /** Outside the volumes, and a browser cannot copy: the user downloads it. */
+  | "download";
+
+/**
+ * What the frontend will do with the output folder the user typed.
+ *
+ * Docker mode adds a constraint the CLI does not have: the container can only
+ * write into its two volumes. A folder outside them still works, but in two
+ * steps — render inside the volume, then hand the file to the host. The desktop
+ * app copies it; a browser offers a download, because it cannot write to a host
+ * path on its own.
+ */
+export interface OutputPlan {
+  /** `output_dir` to send; `undefined` means "beside the selected image". */
+  backendOutputDir?: string;
+  /** Host folder that receives the videos after rendering. */
+  exportDir?: string;
+  /** Why the typed folder is not sent to the backend. */
+  note?: OutputNote;
+}
+
+/**
+ * Decide between "the backend writes there" and "the host receives it after".
+ *
+ * @param canExportToHost - true in the desktop shell, which can copy a produced
+ *   file into any host folder; false in a browser, which can only hand the bytes
+ *   to its own download UI.
+ */
+export function planOutput(
+  outputDir: string,
+  mode: BackendMode,
+  canExportToHost: boolean,
+  config: PathConfig = DEFAULT_PATH_CONFIG,
+): OutputPlan {
+  const norm = normalizePath(outputDir.trim());
+  if (!norm) {
+    return {};
   }
-  return relative ? joinFragments("/app/output", relative) : "/app/output";
+
+  // A native backend has direct filesystem access: it writes where it is told.
+  if (mode === "sidecar") {
+    return { backendOutputDir: norm };
+  }
+
+  const mapped = mapOutputDirToBackend(norm, mode, config);
+  const insideVolumes =
+    mapped !== norm || norm === "/app" || norm.startsWith("/app/");
+  if (insideVolumes) {
+    return { backendOutputDir: mapped };
+  }
+
+  // A host folder the container cannot reach: render in the volume, then move
+  // the result out.
+  return {
+    exportDir: norm,
+    note: canExportToHost ? "exported" : "download",
+  };
 }
 
 /**

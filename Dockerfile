@@ -46,7 +46,8 @@ ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     APP_HOST=0.0.0.0 \
     APP_PORT=8000 \
-    APP_MEDIA_DIR=/app/media
+    APP_MEDIA_DIR=/app/media \
+    APP_OUTPUT_DIR=/app/output
 
 # Writable scratch space for generated videos and client files.
 RUN mkdir -p /app/output /app/media \

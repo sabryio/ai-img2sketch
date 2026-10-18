@@ -103,9 +103,11 @@ src/
   - `output_dir` visible but optional.
 - Submit → POST; disable the button and show the spinner state until the
   response resolves (request is synchronous; may run seconds to minutes).
-- On success: show `output_path` and an embedded preview
-  (`<video src="asset:///<path converted to a Tauri asset URL>" controls>`),
-  with a fallback "Reveal in folder" button if the asset protocol is blocked.
+- On success: show `output_path`, an embedded preview
+  (`<video src="asset:///<path converted to a Tauri asset URL>" controls>`), a
+  **Download** button (`GET /api/v1/artifacts/download?path=...`, saved through
+  the native dialog in Tauri and the browser's own save UI elsewhere), and a
+  fallback "Reveal in folder" button if the asset protocol is blocked.
 - **Path mapping must be explicit** in a `lib/paths.ts` module:
   - sidecar mode → request paths are plain local paths as-is;
   - Docker mode → the backend only sees mounted paths (+ `/app/output`).

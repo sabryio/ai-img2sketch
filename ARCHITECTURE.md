@@ -63,6 +63,8 @@ on abstractions it defines itself.
 - **SketchVideoGenerator**: generate one sketch video (implemented by the single-image use case)
 - **VideoWriter** / **VideoWriterFactory**: write frames
 - **BlobStore**: stage bytes a client uploaded and report the path they landed on
+- **ArtifactReader**: resolve a produced file to a readable path, and nothing
+  outside the volumes the API serves
 
 These are `typing.Protocol` definitions. The application never imports
 infrastructure; infrastructure imports the ports.
@@ -108,11 +110,14 @@ or the filesystem lives here.
 - **MediaStore** (in `storage/`) implements `BlobStore` — sanitizes an upload's
   name, makes it unique and writes it under `<media root>/uploads`, which is the
   volume the container mounts, so the reported path is readable as-is
+- **VolumeArtifactReader** (in `storage/`) implements `ArtifactReader` — resolves
+  a requested path against the resolved media and output roots, so downloads can
+  only ever hand back files the API itself could have produced
 - **`sse/`**: `ORPCSseStream` — framework-agnostic encoder for the
   oRPC-compatible wire format (comments/keep-alives, `id`/`data` message
   frames, `close`/`error` frames); see `docs/orpc-sse-wire-format.md`
 - **`config/`**: `ApiSettings`, loaded from `APP_*` environment variables
-  (host, port, log level, CORS origins)
+  (host, port, log level, CORS origins, media and output roots)
 - **`tauri/backend_client.py`**: helpers that let a Tauri shell start/stop the
   Dockerized backend and probe its health endpoint (see
   `docs/tauri-integration.md`)
@@ -129,8 +134,9 @@ or the filesystem lives here.
     pushes a terminal `close` event on shutdown) plus a module-level `app` for
     `uvicorn ai_img2sketch.presentation.api.app:app`
   - `routers/` — `create_health_router()`, `create_media_router()`,
-    `create_sketches_router()` and `create_events_router()`, each built by a
-    factory injecting dependencies, mounted under `/api/v1`
+    `create_artifacts_router()`, `create_sketches_router()` and
+    `create_events_router()`, each built by a factory injecting dependencies,
+    mounted under `/api/v1`
   - `schemas.py` — request/response DTOs translated into domain value objects;
     every CLI option is settable per request (plus `black_pixel_threshold` and
     custom hand assets), making the API a superset of the CLI
@@ -198,6 +204,7 @@ FastAPI (HTTP interface adapters)
     POST /api/v1/sketches      → parses DTO → VideoConfig → use case (in a worker thread)
                                  → publishes sketch.* events through EventPublisher
     POST /api/v1/sketches/batch → BatchSummary → BatchSketchResult
+    GET  /api/v1/artifacts/download → ArtifactReader → the produced file's bytes
     GET  /api/v1/events        → EventStream.subscribe() → SSE frames
     (parallel transport, same use cases — no business logic in the HTTP layer)
 ```
