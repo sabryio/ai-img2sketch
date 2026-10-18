@@ -7,6 +7,8 @@ Execution runs in a worker thread (OpenCV + frame writing are blocking), and
 While a render is running it also publishes ``sketch.progress`` /
 ``batch.progress`` frames, pushed from that worker thread back onto the loop
 (see :class:`~ai_img2sketch.infrastructure.events.progress_reporter.EventProgressReporter`).
+Those frames may carry a ``preview_path``: a still of the frame just drawn,
+written into the media volume for the life of the run and removed when it ends.
 
 Error mapping (shared with the SSE ``sketch.failed`` / ``batch.failed`` events):
 
@@ -29,6 +31,7 @@ from ....application.services.video_path_resolver import VideoPathResolver
 from ....application.use_cases.generate_batch_videos import BatchSummary
 from ....domain.value_objects.video_config import VideoConfig
 from ....infrastructure.events.progress_reporter import EventProgressReporter
+from ....infrastructure.storage.frame_previews import FramePreviewStore
 from ...bundled import BundledHandPaths, bundled_hand_paths
 from ...composition import (
     build_generate_sketch_video_use_case,
@@ -121,8 +124,13 @@ async def _publish_failure(
     return _unexpected(exc)
 
 
-def create_sketches_router(publisher: EventPublisher) -> APIRouter:
-    """Build the sketches router. ``publisher`` is the event-bus write port."""
+def create_sketches_router(publisher: EventPublisher, *, media_dir: Path) -> APIRouter:
+    """Build the sketches router.
+
+    ``publisher`` is the event-bus write port; ``media_dir`` is the volume that
+    receives (and later discards) each run's frame previews, so a client can
+    fetch the still named by ``preview_path`` while the render runs.
+    """
     router = APIRouter(tags=["sketches"])
 
     @router.post(
@@ -160,6 +168,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
             event="sketch.progress",
             base=payload,
         )
+        previews = FramePreviewStore(media_dir)
 
         try:
             image = await asyncio.to_thread(loader.load, image_path)
@@ -172,9 +181,12 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                     Path(request.object_mask_path) if request.object_mask_path else None
                 ),
                 progress_reporter=progress,
+                previews=previews,
             )
         except Exception as exc:
             raise await _publish_failure(publisher, "sketch", payload, exc) from exc
+        finally:
+            previews.cleanup()
 
         await publisher.publish("sketch.completed", payload)
         return SketchResult(output_path=str(produced))
@@ -204,6 +216,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
             event="batch.progress",
             base=payload,
         )
+        previews = FramePreviewStore(media_dir)
 
         try:
             summary: BatchSummary = await asyncio.to_thread(
@@ -213,9 +226,12 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                 output_directory=(Path(request.output_dir) if request.output_dir else None),
                 object_mask_path=mask_path,
                 progress_reporter=progress,
+                previews=previews,
             )
         except Exception as exc:  # mapped to 404/422/500 and published as batch.failed
             raise await _publish_failure(publisher, "batch", payload, exc) from exc
+        finally:
+            previews.cleanup()
 
         completed: dict[str, object] = {
             "input_dir": str(input_dir),

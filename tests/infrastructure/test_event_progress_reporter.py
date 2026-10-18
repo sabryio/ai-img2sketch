@@ -88,6 +88,14 @@ def test_payload_omits_what_the_run_does_not_use() -> None:
     ) == {"percent": 50, "item_index": 2, "item_total": 4, "item_name": "b.png"}
 
 
+def test_payload_carries_the_preview_path_when_set() -> None:
+    preview_path = "/app/media/previews/ab12/frame-0001.jpg"
+
+    assert progress_payload(
+        GenerationProgress(percent=40, label="image", preview_path=preview_path)
+    ) == {"percent": 40, "label": "image", "preview_path": preview_path}
+
+
 def test_reporting_after_the_loop_is_gone_is_ignored() -> None:
     async def build() -> EventProgressReporter:
         return EventProgressReporter(

@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 
+from ai_img2sketch.application.ports.frame_preview import FramePreviewPublisher
 from ai_img2sketch.application.ports.hand_loader import HandLoader
 from ai_img2sketch.application.ports.image_preprocessor import (
     ImagePreprocessor,
@@ -313,3 +314,79 @@ def test_a_run_without_black_pixels_still_reports_the_final_frames(tmp_path: Pat
     assert [update.percent for update in reporter.updates] == [100]
     assert reporter.updates[0].frame == 1
     assert reporter.updates[0].total_frames == 1
+
+
+class RecordingFramePreviewPublisher(FramePreviewPublisher):
+    """Collects every frame it is asked to store, in order."""
+
+    def __init__(self) -> None:
+        self.frames: list[npt.NDArray[np.uint8]] = []
+
+    def publish(self, frame: npt.NDArray[np.uint8]) -> str | None:
+        self.frames.append(frame)
+        return f"/media/previews/frame-{len(self.frames):04d}.jpg"
+
+
+def test_one_still_is_published_per_report_not_per_frame(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    previews = RecordingFramePreviewPublisher()
+    use_case = _build_use_case(tmp_path, factory)
+
+    # 40 written frames but only a handful of reports: the throttle must hold,
+    # and each still must match exactly one report.
+    config = VideoConfig(frame_rate=5, split_len=2, object_skip_rate=100, end_duration_sec=8)
+    use_case.execute(
+        _make_image_with_black_cells(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        progress_reporter=reporter,
+        previews=previews,
+    )
+
+    assert len(factory.writer.frames) == 40
+    assert 1 < len(reporter.updates) < 40
+    assert len(previews.frames) == len(reporter.updates)
+    # The still each report names is the one the publisher handed back.
+    assert [update.preview_path for update in reporter.updates] == [
+        f"/media/previews/frame-{index:04d}.jpg" for index in range(1, len(reporter.updates) + 1)
+    ]
+
+
+def test_the_still_published_is_the_frame_that_was_written(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    previews = RecordingFramePreviewPublisher()
+    use_case = _build_use_case(tmp_path, factory)
+
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=0)
+    use_case.execute(
+        _make_image_with_black_cells(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        progress_reporter=reporter,
+        previews=previews,
+    )
+
+    # The drawing frame carries the hand overlay, so it need not equal the cell
+    # frame; the point is that the still is the frame written to the video.
+    assert len(previews.frames) == len(factory.writer.frames)
+    assert np.array_equal(previews.frames[0], factory.writer.frames[0])
+
+
+def test_reports_carry_no_preview_path_without_a_publisher(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    use_case = _build_use_case(tmp_path, factory)
+
+    config = VideoConfig(frame_rate=5, split_len=2, object_skip_rate=100, end_duration_sec=8)
+    use_case.execute(
+        _make_image_with_black_cells(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        progress_reporter=reporter,
+    )
+
+    # Nobody is publishing stills, so there is nothing to name.
+    assert reporter.updates
+    assert all(update.preview_path is None for update in reporter.updates)

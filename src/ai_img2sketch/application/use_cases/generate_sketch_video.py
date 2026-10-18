@@ -15,6 +15,7 @@ from ...domain.entities.video import Video
 from ...domain.value_objects.dimensions import Dimensions
 from ...domain.value_objects.object_mask import ObjectMask
 from ...domain.value_objects.video_config import VideoConfig
+from ..ports.frame_preview import FramePreviewPublisher
 from ..ports.hand_loader import HandLoader
 from ..ports.image_preprocessor import ImagePreprocessor, PreprocessedImage
 from ..ports.object_mask_loader import ObjectMaskLoader
@@ -40,14 +41,24 @@ def _final_frame_count(config: VideoConfig) -> int:
 class _DrawProgress:
     """Turns written frames into throttled, monotonic progress reports."""
 
-    def __init__(self, reporter: ProgressReporter, total_frames: int) -> None:
+    def __init__(
+        self,
+        reporter: ProgressReporter,
+        total_frames: int,
+        previews: FramePreviewPublisher | None = None,
+    ) -> None:
         self._reporter = reporter
         self._total = max(total_frames, 1)
         self._frame = 0
         self._reported = 0
+        self._previews = previews
 
-    def frame_written(self, label: str) -> None:
-        """Count one written frame, reporting it once a step has passed."""
+    def frame_written(self, label: str, frame: npt.NDArray[np.uint8]) -> None:
+        """Count one written frame, reporting it once a step has passed.
+
+        A report is the moment a still is worth taking; the throttle is what
+        keeps the previews to a handful per run instead of one per frame.
+        """
         self._frame += 1
         percent = int(self._frame * 100 / self._total)
         at_end = self._frame >= self._total
@@ -61,19 +72,27 @@ class _DrawProgress:
                 frame=self._frame,
                 total_frames=self._total,
                 label=label,
+                preview_path=self._publish_preview(frame),
             )
         )
+
+    def _publish_preview(self, frame: npt.NDArray[np.uint8]) -> str | None:
+        """Take a still of ``frame``, or ``None`` when there is no publisher."""
+        if self._previews is None:
+            return None
+        return self._previews.publish(frame)
 
 
 def _start_progress(
     reporter: ProgressReporter | None,
     drawing_frames: int,
     config: VideoConfig,
+    previews: FramePreviewPublisher | None = None,
 ) -> _DrawProgress | None:
     """Counter for a run, or ``None`` when nobody is listening."""
     if reporter is None:
         return None
-    return _DrawProgress(reporter, drawing_frames + _final_frame_count(config))
+    return _DrawProgress(reporter, drawing_frames + _final_frame_count(config), previews)
 
 
 class GenerateSketchVideoUseCase:
@@ -119,6 +138,7 @@ class GenerateSketchVideoUseCase:
         output_path: Path,
         object_mask_path: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
+        previews: FramePreviewPublisher | None = None,
     ) -> Path:
         """Generate a sketch video for the given image and configuration.
 
@@ -128,6 +148,8 @@ class GenerateSketchVideoUseCase:
             output_path: Destination of the video, e.g. ``photo.jpg`` → ``photo.mp4``.
             object_mask_path: Optional object-mask document for this image.
             progress_reporter: Optional sink for progress while drawing.
+            previews: Optional sink for a still of the frame each progress
+                report was taken from.
 
         Returns:
             The path of the generated video file.
@@ -161,7 +183,7 @@ class GenerateSketchVideoUseCase:
         writer = self._video_writer_factory(video)
         try:
             progress = self._draw_entire_image(
-                writer, preprocessed, hand, config, object_masks, progress_reporter
+                writer, preprocessed, hand, config, object_masks, progress_reporter, previews
             )
             self._add_final_frames(writer, preprocessed, config, progress)
         finally:
@@ -196,6 +218,7 @@ class GenerateSketchVideoUseCase:
         config: VideoConfig,
         object_masks: list[ObjectMask],
         reporter: ProgressReporter | None = None,
+        previews: FramePreviewPublisher | None = None,
     ) -> _DrawProgress | None:
         """Draw the image progressively, group by group (object by object).
 
@@ -219,7 +242,7 @@ class GenerateSketchVideoUseCase:
         if len(black_cells) == 0:
             self._logger.warning("No black pixels found to draw")
             # Only the final frames remain, and they are counted as a whole.
-            return _start_progress(reporter, 0, config)
+            return _start_progress(reporter, 0, config, previews)
 
         self._logger.info("Found %d grid cells to draw", len(black_cells))
 
@@ -238,6 +261,7 @@ class GenerateSketchVideoUseCase:
             reporter,
             sum(len(group.cells) // group.skip_rate for group in groups),
             config,
+            previews,
         )
 
         for group in groups:
@@ -338,7 +362,7 @@ class GenerateSketchVideoUseCase:
             if frame_counter % group.skip_rate == 0:
                 writer.write_frame(frame_with_hand)
                 if progress is not None:
-                    progress.frame_written(group.label)
+                    progress.frame_written(group.label, frame_with_hand)
 
             if frame_counter % 40 == 0:
                 self._logger.info("Progress (%s): %d cells remaining", group.label, len(cells))
@@ -376,4 +400,4 @@ class GenerateSketchVideoUseCase:
         for _ in range(num_frames):
             writer.write_frame(preprocessed.original)
             if progress is not None:
-                progress.frame_written("final image")
+                progress.frame_written("final image", preprocessed.original)

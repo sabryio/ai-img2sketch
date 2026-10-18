@@ -45,6 +45,13 @@ class GenerationProgress:
     item_name: str | None = None
     """File name of the image being drawn."""
 
+    preview_path: str | None = None
+    """A still of the frame just drawn, or ``None``.
+
+    Inside a volume the API serves, and deleted when the run ends: it exists so a
+    client can watch the drawing, not as an artifact to keep.
+    """
+
 
 @runtime_checkable
 class ProgressReporter(Protocol):

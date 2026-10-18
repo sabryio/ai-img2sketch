@@ -44,9 +44,12 @@ def publisher() -> RecordingPublisher:
 
 
 @pytest.fixture()
-def client(publisher: RecordingPublisher) -> Iterator[TestClient]:
+def client(publisher: RecordingPublisher, tmp_path: Path) -> Iterator[TestClient]:
     app = FastAPI()
-    app.include_router(create_sketches_router(publisher=publisher), prefix="/api/v1")
+    app.include_router(
+        create_sketches_router(publisher=publisher, media_dir=tmp_path / "media"),
+        prefix="/api/v1",
+    )
     with TestClient(app) as test_client:
         yield test_client
 

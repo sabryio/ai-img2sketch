@@ -33,6 +33,8 @@ def progress_payload(progress: GenerationProgress) -> dict[str, object]:
         data["item_total"] = progress.item_total
     if progress.item_name is not None:
         data["item_name"] = progress.item_name
+    if progress.preview_path is not None:
+        data["preview_path"] = progress.preview_path
     return data
 
 

@@ -89,7 +89,10 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         create_artifacts_router(reader=artifacts, remover=artifacts),
         prefix=_API_PREFIX,
     )
-    app.include_router(create_sketches_router(publisher=event_bus), prefix=_API_PREFIX)
+    app.include_router(
+        create_sketches_router(publisher=event_bus, media_dir=settings.media_dir),
+        prefix=_API_PREFIX,
+    )
     app.include_router(create_events_router(event_stream=event_bus), prefix=_API_PREFIX)
     return app
 

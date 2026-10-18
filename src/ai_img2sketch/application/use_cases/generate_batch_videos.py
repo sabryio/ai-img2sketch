@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...domain.value_objects.video_config import VideoConfig
+from ..ports.frame_preview import FramePreviewPublisher
 from ..ports.image_loader import ImageLoader
 from ..ports.image_scanner import ImageDirectoryScanner
 from ..ports.progress_reporter import GenerationProgress, ProgressReporter
@@ -75,6 +76,7 @@ class GenerateVideosFromDirectoryUseCase:
         output_directory: Path | None = None,
         object_mask_path: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
+        previews: FramePreviewPublisher | None = None,
     ) -> BatchSummary:
         """Generate videos for every image in ``directory``.
 
@@ -84,6 +86,8 @@ class GenerateVideosFromDirectoryUseCase:
             output_directory: Where to write videos. Defaults to each image's folder.
             object_mask_path: Optional object-mask document applied to every image.
             progress_reporter: Optional sink for progress across the whole run.
+            previews: Optional sink for a still of the frame each progress
+                report was taken from.
 
         Returns:
             A ``BatchSummary`` describing each image's outcome.
@@ -106,6 +110,7 @@ class GenerateVideosFromDirectoryUseCase:
                 index,
                 len(image_paths),
                 progress_reporter,
+                previews,
             )
             for index, image_path in enumerate(image_paths, start=1)
         ]
@@ -120,6 +125,7 @@ class GenerateVideosFromDirectoryUseCase:
         index: int,
         total: int,
         progress_reporter: ProgressReporter | None,
+        previews: FramePreviewPublisher | None,
     ) -> BatchItemResult:
         """Generate a video for one image, capturing any failure."""
         output_path = self._path_resolver.resolve(image_path, output_directory)
@@ -145,6 +151,7 @@ class GenerateVideosFromDirectoryUseCase:
                 output_path=output_path,
                 object_mask_path=object_mask_path,
                 progress_reporter=scoped,
+                previews=previews,
             )
         except Exception as exc:  # one bad image must not stop the batch
             self._logger.error("Failed to process %s: %s", image_path.name, exc)
@@ -185,5 +192,6 @@ class _BatchItemProgress:
                 item_index=self._index,
                 item_total=self._total,
                 item_name=self._image_name,
+                preview_path=progress.preview_path,
             )
         )

@@ -5,6 +5,7 @@ from typing import Protocol
 
 from ...domain.entities.image import Image
 from ...domain.value_objects.video_config import VideoConfig
+from .frame_preview import FramePreviewPublisher
 from .progress_reporter import ProgressReporter
 
 
@@ -13,7 +14,8 @@ class SketchVideoGenerator(Protocol):
 
     ``GenerateSketchVideoUseCase`` satisfies this contract; the batch use case
     depends on the abstraction so it can be tested with a lightweight fake. The
-    optional reporter is how a batch learns how far *this* image has got.
+    optional reporter is how a batch learns how far *this* image has got, and the
+    optional publisher is how its previews reach the same client.
     """
 
     def execute(
@@ -24,6 +26,7 @@ class SketchVideoGenerator(Protocol):
         output_path: Path,
         object_mask_path: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
+        previews: FramePreviewPublisher | None = None,
     ) -> Path:
         """Generate and return the video path for ``image``."""
         ...

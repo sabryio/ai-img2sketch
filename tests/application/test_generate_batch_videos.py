@@ -3,8 +3,10 @@
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 import pytest
 
+from ai_img2sketch.application.ports.frame_preview import FramePreviewPublisher
 from ai_img2sketch.application.ports.image_loader import ImageLoader
 from ai_img2sketch.application.ports.image_scanner import ImageDirectoryScanner
 from ai_img2sketch.application.ports.progress_reporter import (
@@ -39,9 +41,11 @@ class FakeImageLoader(ImageLoader):
 
 
 class FakeSketchGenerator(SketchVideoGenerator):
-    def __init__(self, fail_for: set[Path] | None = None) -> None:
+    def __init__(self, fail_for: set[Path] | None = None, preview_path: str | None = None) -> None:
         self.calls: list[tuple[Path | None, Path, Path | None]] = []
+        self.previews: list[FramePreviewPublisher | None] = []
         self._fail_for = fail_for or set()
+        self._preview_path = preview_path
 
     def execute(
         self,
@@ -51,12 +55,20 @@ class FakeSketchGenerator(SketchVideoGenerator):
         output_path: Path,
         object_mask_path: Path | None = None,
         progress_reporter: ProgressReporter | None = None,
+        previews: FramePreviewPublisher | None = None,
     ) -> Path:
         self.calls.append((image.path, output_path, object_mask_path))
+        self.previews.append(previews)
         if progress_reporter is not None:
             # What the real use case reports halfway through an image.
             progress_reporter.report(
-                GenerationProgress(percent=50, frame=1, total_frames=2, label="image")
+                GenerationProgress(
+                    percent=50,
+                    frame=1,
+                    total_frames=2,
+                    label="image",
+                    preview_path=self._preview_path,
+                )
             )
         if image.path in self._fail_for:
             assert image.path is not None
@@ -178,6 +190,34 @@ def test_the_batch_reporter_passes_frame_detail_through(tmp_path: Path) -> None:
     assert halfway.frame == 1
     assert halfway.total_frames == 2
     assert halfway.label == "image"
+
+
+def test_the_batch_reporter_passes_the_preview_path_through(tmp_path: Path) -> None:
+    reporter = RecordingProgressReporter()
+    generator = FakeSketchGenerator(preview_path="/media/previews/a/frame-0001.jpg")
+    use_case = _use_case([tmp_path / "a.png"], generator, FakeImageLoader())
+
+    use_case.execute(tmp_path, CONFIG, progress_reporter=reporter)
+
+    # The still the inner use case published must survive the batch wrapper.
+    assert reporter.updates[-1].preview_path == "/media/previews/a/frame-0001.jpg"
+
+
+def test_the_preview_publisher_is_forwarded_to_the_inner_use_case(tmp_path: Path) -> None:
+    generator = FakeSketchGenerator()
+    previews = FakeFramePreviewPublisher()
+    use_case = _use_case([tmp_path / "a.png"], generator, FakeImageLoader())
+
+    use_case.execute(tmp_path, CONFIG, previews=previews)
+
+    assert generator.previews == [previews]
+
+
+class FakeFramePreviewPublisher(FramePreviewPublisher):
+    """A stand-in publisher: identity is all this test cares about."""
+
+    def publish(self, frame: npt.NDArray[np.uint8]) -> str | None:  # noqa: ARG002
+        return "/media/previews/frame-0001.jpg"
 
 
 def test_a_batch_without_a_reporter_still_runs(tmp_path: Path) -> None:
