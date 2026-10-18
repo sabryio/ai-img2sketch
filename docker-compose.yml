@@ -13,18 +13,22 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
       APP_LOG_LEVEL: info
-      # Uploads picked in the webview are staged in the mounted media volume,
-      # so the path the API returns is immediately readable by the container.
+      # Nothing is mounted from the host: a client uploads the file it wants
+      # processed, downloads the result, and can delete either afterwards. Both
+      # directories are tmpfs, so they live in RAM and vanish with the container
+      # rather than persisting in an image layer.
       APP_MEDIA_DIR: /app/media
-      # Downloads are confined to these two volumes.
       APP_OUTPUT_DIR: /app/output
       APP_CORS_ORIGINS: >
         ["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]
-    volumes:
-      # Client files for the API (paths passed in requests must live here).
-      - ./media:/app/media
-      # Generated videos land in /app/output when output_dir=/app/output.
-      - ./output:/app/output
+    tmpfs:
+      # Scratch space for uploads and rendered videos. Sized so a runaway batch
+      # cannot eat the host's memory, and wiped whenever the container restarts.
+      # A tmpfs mount starts out owned by root, which would leave the image's
+      # non-root user (uid 10001, see the Dockerfile) unable to write in it, so
+      # both are handed to that user explicitly.
+      - /app/media:size=512m,uid=10001,gid=10001,mode=0755
+      - /app/output:size=1g,uid=10001,gid=10001,mode=0755
     restart: unless-stopped
     healthcheck:
       test:

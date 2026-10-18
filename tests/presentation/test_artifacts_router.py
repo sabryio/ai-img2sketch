@@ -106,3 +106,58 @@ def test_a_directory_is_a_422(client: TestClient, media_root: Path) -> None:
 
 def test_requires_a_path(client: TestClient) -> None:
     assert client.get("/api/v1/artifacts/download").status_code == 422
+
+
+def test_inline_disposition_streams_the_file_for_a_preview(
+    client: TestClient, output_root: Path
+) -> None:
+    response = client.get(
+        "/api/v1/artifacts/download",
+        params={"path": str(output_root / "batch.mp4"), "disposition": "inline"},
+    )
+
+    assert response.status_code == 200
+    # A browser will not play a video served as an opaque attachment.
+    assert response.headers["content-type"] == "video/mp4"
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.content == _VIDEO
+
+
+def test_delete_removes_a_produced_file(client: TestClient, output_root: Path) -> None:
+    video = output_root / "batch.mp4"
+
+    response = client.delete("/api/v1/artifacts", params={"path": str(video)})
+
+    assert response.status_code == 204
+    assert not video.exists()
+    assert output_root.is_dir()
+    # ...and it is no longer downloadable.
+    assert client.get("/api/v1/artifacts/download", params={"path": str(video)}).status_code == 404
+
+
+def test_delete_is_idempotent(client: TestClient, output_root: Path) -> None:
+    # A client that retries a cleanup must not be told it failed.
+    for _ in range(2):
+        response = client.delete(
+            "/api/v1/artifacts", params={"path": str(output_root / "batch.mp4")}
+        )
+        assert response.status_code == 204
+
+
+def test_delete_refuses_a_path_outside_the_volumes(client: TestClient, tmp_path: Path) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("nope", encoding="utf-8")
+
+    response = client.delete("/api/v1/artifacts", params={"path": str(secret)})
+
+    assert response.status_code == 422
+    assert "outside the served volumes" in _detail(response)
+    assert secret.exists()
+
+
+def test_delete_refuses_a_directory(client: TestClient, media_root: Path) -> None:
+    response = client.delete("/api/v1/artifacts", params={"path": str(media_root / "sketches")})
+
+    assert response.status_code == 422
+    assert "not a file" in _detail(response)
+    assert (media_root / "sketches").is_dir()
