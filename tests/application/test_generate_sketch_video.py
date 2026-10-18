@@ -15,6 +15,10 @@ from ai_img2sketch.application.ports.image_preprocessor import (
     PreprocessedImage,
 )
 from ai_img2sketch.application.ports.object_mask_loader import ObjectMaskLoader
+from ai_img2sketch.application.ports.progress_reporter import (
+    GenerationProgress,
+    ProgressReporter,
+)
 from ai_img2sketch.application.ports.video_writer import VideoWriter, VideoWriterFactory
 from ai_img2sketch.application.use_cases.generate_sketch_video import GenerateSketchVideoUseCase
 from ai_img2sketch.domain.entities.hand import Hand
@@ -234,3 +238,78 @@ def test_draw_duration_overrides_the_object_skip_rate(tmp_path: Path) -> None:
     use_case.execute(_make_image_with_black_cells(), config, output_path=tmp_path / "out.mp4")
 
     assert len(factory.writer.frames) == 1
+
+
+class RecordingProgressReporter(ProgressReporter):
+    """Collects every update a run reports, in order."""
+
+    def __init__(self) -> None:
+        self.updates: list[GenerationProgress] = []
+
+    def report(self, progress: GenerationProgress) -> None:
+        self.updates.append(progress)
+
+
+def test_progress_is_reported_per_step_and_ends_at_one_hundred(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    use_case = _build_use_case(tmp_path, factory)
+
+    # Two black cells at skip_rate=1, plus four final frames (1 fps * 4 s).
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=4)
+    use_case.execute(
+        _make_image_with_black_cells(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        progress_reporter=reporter,
+    )
+
+    assert len(factory.writer.frames) == 6
+    assert [update.percent for update in reporter.updates] == [16, 33, 50, 66, 83, 100]
+    assert [update.frame for update in reporter.updates] == [1, 2, 3, 4, 5, 6]
+    assert {update.total_frames for update in reporter.updates} == {6}
+    # Drawing frames carry the group label; the tail is the finished image.
+    assert reporter.updates[0].label == "image"
+    assert reporter.updates[-1].label == "final image"
+    # A single request has no position in a batch.
+    assert reporter.updates[-1].item_index is None
+
+
+def test_progress_reports_steps_rather_than_every_frame(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    use_case = _build_use_case(tmp_path, factory)
+
+    # 40 final frames and no drawing frames: one report per frame would be noise
+    # on the event stream without telling the user anything new.
+    config = VideoConfig(frame_rate=5, split_len=2, object_skip_rate=100, end_duration_sec=8)
+    use_case.execute(
+        _make_image_with_black_cells(),
+        config,
+        output_path=tmp_path / "out.mp4",
+        progress_reporter=reporter,
+    )
+
+    assert len(factory.writer.frames) == 40
+    percents = [update.percent for update in reporter.updates]
+    assert percents == sorted(percents)
+    assert len(set(percents)) == len(percents)
+    assert 1 < len(percents) < 40
+    assert percents[0] >= 5
+    assert percents[-1] == 100
+
+
+def test_a_run_without_black_pixels_still_reports_the_final_frames(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    reporter = RecordingProgressReporter()
+    use_case = _build_use_case(tmp_path, factory)
+
+    white = Image.from_array(np.full((4, 4, 3), 255, dtype=np.uint8))
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=1, end_duration_sec=1)
+
+    use_case.execute(white, config, output_path=tmp_path / "out.mp4", progress_reporter=reporter)
+
+    # Nothing to draw, so the run's whole length is the tail of final frames.
+    assert [update.percent for update in reporter.updates] == [100]
+    assert reporter.updates[0].frame == 1
+    assert reporter.updates[0].total_frames == 1

@@ -7,6 +7,10 @@ import pytest
 
 from ai_img2sketch.application.ports.image_loader import ImageLoader
 from ai_img2sketch.application.ports.image_scanner import ImageDirectoryScanner
+from ai_img2sketch.application.ports.progress_reporter import (
+    GenerationProgress,
+    ProgressReporter,
+)
 from ai_img2sketch.application.ports.sketch_video_generator import SketchVideoGenerator
 from ai_img2sketch.application.use_cases.generate_batch_videos import (
     GenerateVideosFromDirectoryUseCase,
@@ -46,8 +50,14 @@ class FakeSketchGenerator(SketchVideoGenerator):
         *,
         output_path: Path,
         object_mask_path: Path | None = None,
+        progress_reporter: ProgressReporter | None = None,
     ) -> Path:
         self.calls.append((image.path, output_path, object_mask_path))
+        if progress_reporter is not None:
+            # What the real use case reports halfway through an image.
+            progress_reporter.report(
+                GenerationProgress(percent=50, frame=1, total_frames=2, label="image")
+            )
         if image.path in self._fail_for:
             assert image.path is not None
             raise RuntimeError(f"boom: {image.path.name}")
@@ -126,3 +136,52 @@ def test_raises_when_the_directory_has_no_images(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="No supported images"):
         use_case.execute(tmp_path, CONFIG)
+
+
+class RecordingProgressReporter(ProgressReporter):
+    """Collects every update a run reports, in order."""
+
+    def __init__(self) -> None:
+        self.updates: list[GenerationProgress] = []
+
+    def report(self, progress: GenerationProgress) -> None:
+        self.updates.append(progress)
+
+
+def test_progress_is_scaled_across_the_whole_batch(tmp_path: Path) -> None:
+    images = [tmp_path / "a.png", tmp_path / "b.png"]
+    reporter = RecordingProgressReporter()
+    use_case = _use_case(images, FakeSketchGenerator(), FakeImageLoader())
+
+    use_case.execute(tmp_path, CONFIG, progress_reporter=reporter)
+
+    # Each image announces its own slice, then reports halfway through it, so the
+    # overall percentage only ever moves forward.
+    assert [
+        (update.item_index, update.item_total, update.item_name, update.percent)
+        for update in reporter.updates
+    ] == [
+        (1, 2, "a.png", 0),
+        (1, 2, "a.png", 25),
+        (2, 2, "b.png", 50),
+        (2, 2, "b.png", 75),
+    ]
+
+
+def test_the_batch_reporter_passes_frame_detail_through(tmp_path: Path) -> None:
+    reporter = RecordingProgressReporter()
+    use_case = _use_case([tmp_path / "a.png"], FakeSketchGenerator(), FakeImageLoader())
+
+    use_case.execute(tmp_path, CONFIG, progress_reporter=reporter)
+
+    halfway = reporter.updates[-1]
+    assert halfway.frame == 1
+    assert halfway.total_frames == 2
+    assert halfway.label == "image"
+
+
+def test_a_batch_without_a_reporter_still_runs(tmp_path: Path) -> None:
+    use_case = _use_case([tmp_path / "a.png"], FakeSketchGenerator(), FakeImageLoader())
+
+    # Nobody listening is the normal CLI case, not an error.
+    assert use_case.execute(tmp_path, CONFIG).succeeded

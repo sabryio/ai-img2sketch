@@ -4,6 +4,9 @@ Handlers translate request DTOs into domain objects and invoke the use cases
 from the composition root, so no business logic lives in the HTTP layer.
 Execution runs in a worker thread (OpenCV + frame writing are blocking), and
 ``sketch.*`` / ``batch.*`` lifecycle events are published on the event loop.
+While a render is running it also publishes ``sketch.progress`` /
+``batch.progress`` frames, pushed from that worker thread back onto the loop
+(see :class:`~ai_img2sketch.infrastructure.events.progress_reporter.EventProgressReporter`).
 
 Error mapping (shared with the SSE ``sketch.failed`` / ``batch.failed`` events):
 
@@ -25,6 +28,7 @@ from ....application.ports.event_publisher import EventPublisher
 from ....application.services.video_path_resolver import VideoPathResolver
 from ....application.use_cases.generate_batch_videos import BatchSummary
 from ....domain.value_objects.video_config import VideoConfig
+from ....infrastructure.events.progress_reporter import EventProgressReporter
 from ...bundled import BundledHandPaths, bundled_hand_paths
 from ...composition import (
     build_generate_sketch_video_use_case,
@@ -148,6 +152,15 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
         }
         await publisher.publish("sketch.started", payload)
 
+        # Rendering happens off-loop, so progress is pushed back through the
+        # loop by this reporter (see the adapter).
+        progress = EventProgressReporter(
+            loop=asyncio.get_running_loop(),
+            publisher=publisher,
+            event="sketch.progress",
+            base=payload,
+        )
+
         try:
             image = await asyncio.to_thread(loader.load, image_path)
             produced = await asyncio.to_thread(
@@ -158,6 +171,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                 object_mask_path=(
                     Path(request.object_mask_path) if request.object_mask_path else None
                 ),
+                progress_reporter=progress,
             )
         except Exception as exc:
             raise await _publish_failure(publisher, "sketch", payload, exc) from exc
@@ -184,6 +198,13 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
         payload: dict[str, object] = {"input_dir": str(input_dir)}
         await publisher.publish("batch.started", payload)
 
+        progress = EventProgressReporter(
+            loop=asyncio.get_running_loop(),
+            publisher=publisher,
+            event="batch.progress",
+            base=payload,
+        )
+
         try:
             summary: BatchSummary = await asyncio.to_thread(
                 use_case.execute,
@@ -191,6 +212,7 @@ def create_sketches_router(publisher: EventPublisher) -> APIRouter:
                 _video_config(request.config),
                 output_directory=(Path(request.output_dir) if request.output_dir else None),
                 object_mask_path=mask_path,
+                progress_reporter=progress,
             )
         except Exception as exc:  # mapped to 404/422/500 and published as batch.failed
             raise await _publish_failure(publisher, "batch", payload, exc) from exc

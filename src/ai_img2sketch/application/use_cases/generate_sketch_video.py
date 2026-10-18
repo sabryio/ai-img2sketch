@@ -18,12 +18,62 @@ from ...domain.value_objects.video_config import VideoConfig
 from ..ports.hand_loader import HandLoader
 from ..ports.image_preprocessor import ImagePreprocessor, PreprocessedImage
 from ..ports.object_mask_loader import ObjectMaskLoader
+from ..ports.progress_reporter import GenerationProgress, ProgressReporter
 from ..ports.video_writer import VideoWriter, VideoWriterFactory
 from ..services.dimension_adjuster import DimensionAdjuster
 from ..services.drawing_calculator import DrawingPathCalculator, GridCalculator
 from ..services.drawing_planner import DrawingGroup, DrawingPlanner
 from ..services.drawing_speed import DrawingSpeedCalculator
 from ..services.hand_overlay import HandOverlayService
+
+#: Percent steps reported while drawing. One report per frame would flood the
+#: event stream (a six-second video is hundreds of frames) without telling the
+#: user anything new, so a step is the unit of "the bar moved".
+_PROGRESS_STEP_PERCENT = 5
+
+
+def _final_frame_count(config: VideoConfig) -> int:
+    """How many frames show the finished image, after the drawing."""
+    return config.frame_rate * config.end_duration_sec
+
+
+class _DrawProgress:
+    """Turns written frames into throttled, monotonic progress reports."""
+
+    def __init__(self, reporter: ProgressReporter, total_frames: int) -> None:
+        self._reporter = reporter
+        self._total = max(total_frames, 1)
+        self._frame = 0
+        self._reported = 0
+
+    def frame_written(self, label: str) -> None:
+        """Count one written frame, reporting it once a step has passed."""
+        self._frame += 1
+        percent = int(self._frame * 100 / self._total)
+        at_end = self._frame >= self._total
+        if not at_end and percent - self._reported < _PROGRESS_STEP_PERCENT:
+            return
+
+        self._reported = percent
+        self._reporter.report(
+            GenerationProgress(
+                percent=percent,
+                frame=self._frame,
+                total_frames=self._total,
+                label=label,
+            )
+        )
+
+
+def _start_progress(
+    reporter: ProgressReporter | None,
+    drawing_frames: int,
+    config: VideoConfig,
+) -> _DrawProgress | None:
+    """Counter for a run, or ``None`` when nobody is listening."""
+    if reporter is None:
+        return None
+    return _DrawProgress(reporter, drawing_frames + _final_frame_count(config))
 
 
 class GenerateSketchVideoUseCase:
@@ -68,6 +118,7 @@ class GenerateSketchVideoUseCase:
         *,
         output_path: Path,
         object_mask_path: Path | None = None,
+        progress_reporter: ProgressReporter | None = None,
     ) -> Path:
         """Generate a sketch video for the given image and configuration.
 
@@ -76,6 +127,7 @@ class GenerateSketchVideoUseCase:
             config: Video generation configuration.
             output_path: Destination of the video, e.g. ``photo.jpg`` → ``photo.mp4``.
             object_mask_path: Optional object-mask document for this image.
+            progress_reporter: Optional sink for progress while drawing.
 
         Returns:
             The path of the generated video file.
@@ -108,8 +160,10 @@ class GenerateSketchVideoUseCase:
 
         writer = self._video_writer_factory(video)
         try:
-            self._draw_entire_image(writer, preprocessed, hand, config, object_masks)
-            self._add_final_frames(writer, preprocessed, config)
+            progress = self._draw_entire_image(
+                writer, preprocessed, hand, config, object_masks, progress_reporter
+            )
+            self._add_final_frames(writer, preprocessed, config, progress)
         finally:
             writer.release()
 
@@ -141,8 +195,13 @@ class GenerateSketchVideoUseCase:
         hand: Hand,
         config: VideoConfig,
         object_masks: list[ObjectMask],
-    ) -> None:
-        """Draw the image progressively, group by group (object by object)."""
+        reporter: ProgressReporter | None = None,
+    ) -> _DrawProgress | None:
+        """Draw the image progressively, group by group (object by object).
+
+        Returns the frame counter handed to the final-frames phase, so the run
+        reports one continuous percentage; ``None`` when nobody is listening.
+        """
         self._logger.info("Drawing entire image...")
 
         drawn_frame = np.full(preprocessed.original.shape, 255, dtype=np.uint8)
@@ -159,7 +218,8 @@ class GenerateSketchVideoUseCase:
 
         if len(black_cells) == 0:
             self._logger.warning("No black pixels found to draw")
-            return
+            # Only the final frames remain, and they are counted as a whole.
+            return _start_progress(reporter, 0, config)
 
         self._logger.info("Found %d grid cells to draw", len(black_cells))
 
@@ -173,6 +233,13 @@ class GenerateSketchVideoUseCase:
             skip_rate,
         )
 
+        # Every group writes one frame per `skip_rate` cells it draws.
+        progress = _start_progress(
+            reporter,
+            sum(len(group.cells) // group.skip_rate for group in groups),
+            config,
+        )
+
         for group in groups:
             if len(group.cells) == 0:
                 continue
@@ -183,8 +250,17 @@ class GenerateSketchVideoUseCase:
                 group.skip_rate,
             )
             self._draw_group(
-                writer, drawn_frame, hand, preprocessed.dimensions, grid, group, config.split_len
+                writer,
+                drawn_frame,
+                hand,
+                preprocessed.dimensions,
+                grid,
+                group,
+                config.split_len,
+                progress,
             )
+
+        return progress
 
     def _resolve_skip_rate(
         self,
@@ -235,6 +311,7 @@ class GenerateSketchVideoUseCase:
         grid: npt.NDArray,
         group: DrawingGroup,
         split_len: int,
+        progress: _DrawProgress | None = None,
     ) -> None:
         """Draw every cell of one group following a nearest-neighbour path."""
         cells = group.cells.copy()
@@ -260,6 +337,8 @@ class GenerateSketchVideoUseCase:
             frame_counter += 1
             if frame_counter % group.skip_rate == 0:
                 writer.write_frame(frame_with_hand)
+                if progress is not None:
+                    progress.frame_written(group.label)
 
             if frame_counter % 40 == 0:
                 self._logger.info("Progress (%s): %d cells remaining", group.label, len(cells))
@@ -289,9 +368,12 @@ class GenerateSketchVideoUseCase:
         writer: VideoWriter,
         preprocessed: PreprocessedImage,
         config: VideoConfig,
+        progress: _DrawProgress | None = None,
     ) -> None:
         """Add final frames showing the original image."""
-        num_frames = config.frame_rate * config.end_duration_sec
+        num_frames = _final_frame_count(config)
         self._logger.info("Adding %d final frames...", num_frames)
         for _ in range(num_frames):
             writer.write_frame(preprocessed.original)
+            if progress is not None:
+                progress.frame_written("final image")
