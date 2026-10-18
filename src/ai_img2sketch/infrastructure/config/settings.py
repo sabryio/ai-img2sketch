@@ -7,6 +7,8 @@ Tauri webview on localhost.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -32,6 +34,14 @@ class ApiSettings(BaseSettings):
         default_factory=lambda: list(_DEFAULT_CORS_ORIGINS),
         alias="APP_CORS_ORIGINS",
         description="JSON list of allowed CORS origins",
+    )
+    media_dir: Path = Field(
+        default=Path("media"),
+        alias="APP_MEDIA_DIR",
+        description=(
+            "Directory that receives client uploads; must be the path the server "
+            "can read (the container's /app/media mount)"
+        ),
     )
 
 

@@ -339,6 +339,7 @@ ai-img2sketch/
 │   │       └── video_config.py   # Video configuration
 │   ├── application/               # Application layer
 │   │   ├── ports/                # Interfaces the app depends on
+│   │   │   ├── blob_store.py
 │   │   │   ├── image_loader.py
 │   │   │   ├── hand_loader.py
 │   │   │   ├── image_preprocessor.py
@@ -366,6 +367,8 @@ ai-img2sketch/
 │   │       └── video_writer.py           # OpenCVVideoWriter
 │   │   ├── events/
 │   │   │   └── async_event_bus.py        # In-process pub/sub backing SSE
+│   │   ├── storage/
+│   │   │   └── media_store.py    # MediaStore: stages client uploads in the volume
 │   │   ├── config/
 │   │   │   └── settings.py        # ApiSettings (APP_* environment variables)
 │   │   └── tauri/
@@ -379,7 +382,7 @@ ai-img2sketch/
 │   │       ├── settings.py       # ApiSettings re-export
 │   │       ├── schemas.py        # Request/response DTOs
 │   │       ├── __main__.py       # img2sketch-api console entry point
-│   │       └── routers/          # health.py, sketches.py, events.py (SSE)
+│   │       └── routers/          # health.py, media.py, sketches.py, events.py (SSE)
 │   └── resources/                 # Bundled package data
 │       └── images/                # Default hand image + mask (shipped in the wheel)
 │           ├── drawing-hand.png

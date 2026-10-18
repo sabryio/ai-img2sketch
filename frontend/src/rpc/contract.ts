@@ -59,6 +59,31 @@ export const HealthSchema = z.object({
 });
 
 /**
+ * Body of `POST /api/v1/media` — a file the client picked, base64-encoded.
+ *
+ * A desktop shell never needs this (it hands over a host path and the compose
+ * mounts make it readable). A browser does: the picked file only exists as
+ * bytes, so the client stages them through the API and uses the returned path.
+ *
+ * `directory` is a client-chosen bucket (`[a-z0-9][a-z0-9-]*`) that lets a
+ * folder pick land in one shared folder, which is what a batch run needs.
+ */
+export const StoreMediaRequestSchema = z.object({
+  filename: z.string().min(1).max(255),
+  content_base64: z.string().min(1),
+  directory: z
+    .string()
+    .min(1)
+    .max(32)
+    .regex(/^[a-z0-9][a-z0-9-]*$/)
+    .optional(),
+});
+
+export const StoredMediaSchema = z.object({
+  path: z.string().min(1),
+});
+
+/**
  * One event from `GET /api/v1/events`, as a discriminated union on the
  * `"event"` field the server injects into every payload.
  *
@@ -109,6 +134,16 @@ export const contract = oc.meta(openapi({ prefix: "/api/v1" })).router({
     .meta(openapi({ method: "GET", path: "/health" }))
     .output(HealthSchema),
 
+  // POST /api/v1/media — stage a picked file where the backend can read it
+  storeMedia: oc
+    .meta(openapi({ method: "POST", path: "/media" }))
+    .errors({
+      UNPROCESSABLE_CONTENT: {},
+      INTERNAL_SERVER_ERROR: {},
+    })
+    .input(StoreMediaRequestSchema)
+    .output(StoredMediaSchema),
+
   // POST /api/v1/sketches
   generateSketch: oc
     .meta(openapi({ method: "POST", path: "/sketches" }))
@@ -147,6 +182,8 @@ export type SketchOptions = z.infer<typeof SketchOptionsSchema>;
 export type SketchRequest = z.infer<typeof SketchRequestSchema>;
 export type BatchSketchRequest = z.infer<typeof BatchSketchRequestSchema>;
 export type SketchResult = z.infer<typeof SketchResultSchema>;
+export type StoreMediaRequest = z.infer<typeof StoreMediaRequestSchema>;
+export type StoredMedia = z.infer<typeof StoredMediaSchema>;
 export type BatchItem = z.infer<typeof BatchItemSchema>;
 export type BatchSketchResult = z.infer<typeof BatchSketchResultSchema>;
 export type EventData = z.infer<typeof EventDataSchema>;

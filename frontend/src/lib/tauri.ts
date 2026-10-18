@@ -1,88 +1,174 @@
 /**
  * Tauri 2 plugin wrappers (dialog, shell, fs).
  *
- * Every wrapper degrades explicitly in a plain browser: dialogs ask for a path
- * instead of fabricating one, and process-level actions report that they need
- * the desktop shell. Nothing here pretends to have succeeded — a browser cannot
- * reach the host filesystem, and silently inventing a path (or a "docker
- * compose up" that never ran) only moves the failure downstream.
+ * Every wrapper degrades explicitly in a plain browser: the file pickers return
+ * the picked `File` (a browser cannot name a host path), and process-level
+ * actions report that they need the desktop shell. Nothing here pretends to
+ * have succeeded — silently inventing a path (or a "docker compose up" that
+ * never ran) only moves the failure downstream.
  */
+
+import { IMAGE_ACCEPT } from "./media";
 
 export function isTauriEnvironment(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/** File-dialog filters matching what the backend's media store accepts. */
+const IMAGE_FILTERS = [
+  { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] },
+  { name: "All Files", extensions: ["*"] },
+];
+
 export interface FilePickerOptions {
   title?: string;
   filters?: Array<{ name: string; extensions: string[] }>;
+}
+
+/** An image the user picked, in whichever form the host could give it. */
+export interface PickedImage {
+  /** Host path, when the desktop shell could provide one. */
+  path: string | null;
+  /** Browser-picked file, whose bytes have to be staged through the API. */
+  file: File | null;
+}
+
+/** A folder of images the user picked. */
+export interface PickedDirectory {
+  /** Host directory, when the desktop shell could provide one. */
+  path: string | null;
+  /** Browser-picked files, whose bytes have to be staged through the API. */
+  files: File[] | null;
+}
+
+interface FileInputOptions {
+  accept?: string;
   multiple?: boolean;
-}
-
-/** Ask the user for a path in a browser, where no native picker exists. */
-function promptForPath(title: string, hint: string): string | null {
-  const entered = window.prompt(title, hint);
-  return entered && entered.trim() ? entered.trim() : null;
+  directory?: boolean;
 }
 
 /**
- * Pick an image file from the host filesystem.
+ * Open the platform's own file dialog from a browser.
  *
- * Returns `null` when nothing is chosen — including in a browser, which has no
- * way to turn a `<input type="file">` selection into a path the backend can
- * open.
+ * Resolves with the chosen files, or `null` when the dialog is dismissed — a
+ * browser exposes no path, only the bytes, which is why the caller stages them.
  */
-export async function openImageFileDialog(
-  options?: FilePickerOptions,
-): Promise<string | null> {
-  if (isTauriEnvironment()) {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        title: options?.title || "Select Image for Sketching",
-        multiple: false,
-        directory: false,
-        filters: options?.filters || [
-          { name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "bmp"] },
-          { name: "All Files", extensions: ["*"] },
-        ],
-      });
-
-      return typeof selected === "string" ? selected : null;
-    } catch (err) {
-      console.warn("Tauri image dialog failed", err);
-      return null;
+function openFileInput(options: FileInputOptions): Promise<File[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    if (options.accept) {
+      input.accept = options.accept;
     }
+    if (options.multiple) {
+      input.multiple = true;
+    }
+    if (options.directory) {
+      input.setAttribute("webkitdirectory", "");
+    }
+    input.style.display = "none";
+
+    const finish = (files: File[] | null) => {
+      input.remove();
+      resolve(files);
+    };
+
+    input.addEventListener("change", () => {
+      const files = input.files ? Array.from(input.files) : [];
+      finish(files.length > 0 ? files : null);
+    });
+    // Chromium fires this when the dialog is dismissed; without it the promise
+    // would never settle.
+    input.addEventListener("cancel", () => finish(null));
+
+    document.body.append(input);
+    input.click();
+  });
+}
+
+/** Show the shell's file dialog, or `null` if it failed or was cancelled. */
+async function pickViaTauri(
+  title: string,
+  directory: boolean,
+  filters?: Array<{ name: string; extensions: string[] }>,
+): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return null;
   }
 
-  return promptForPath(
-    options?.title || "Enter the image path the backend can read",
-    "./media/image.png",
-  );
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      title,
+      multiple: false,
+      directory,
+      filters,
+    });
+    return typeof selected === "string" ? selected : null;
+  } catch (err) {
+    console.warn("Tauri dialog failed", err);
+    return null;
+  }
 }
 
 /**
- * Pick a directory from the host filesystem.
+ * Pick an image file.
+ *
+ * The desktop shell returns a host path directly. A browser returns the picked
+ * `File`, which the caller must stage through `POST /api/v1/media` before the
+ * backend can read it.
  */
-export async function openDirectoryDialog(
-  title: string = "Select Directory",
-): Promise<string | null> {
-  if (isTauriEnvironment()) {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        title,
-        multiple: false,
-        directory: true,
-      });
+export async function pickImageFile(
+  options?: FilePickerOptions,
+): Promise<PickedImage | null> {
+  const title = options?.title || "Select Image for Sketching";
 
-      return typeof selected === "string" ? selected : null;
-    } catch (err) {
-      console.warn("Tauri directory dialog failed", err);
-      return null;
-    }
+  if (isTauriEnvironment()) {
+    const path = await pickViaTauri(title, false, options?.filters || IMAGE_FILTERS);
+    return path ? { path, file: null } : null;
   }
 
-  return promptForPath(title, "./media/batch_inputs");
+  const files = await openFileInput({ accept: IMAGE_ACCEPT, multiple: false });
+  const file = files?.[0];
+  return file ? { path: null, file } : null;
+}
+
+/**
+ * Pick a folder of images.
+ *
+ * The desktop shell returns the directory path; a browser returns every file
+ * inside it (there is no directory path to be had), for the caller to stage.
+ */
+export async function pickImageDirectory(
+  title: string = "Select Input Directory of Images",
+): Promise<PickedDirectory | null> {
+  if (isTauriEnvironment()) {
+    const path = await pickViaTauri(title, true);
+    return path ? { path, files: null } : null;
+  }
+
+  const files = await openFileInput({
+    accept: IMAGE_ACCEPT,
+    multiple: true,
+    directory: true,
+  });
+  return files ? { path: null, files } : null;
+}
+
+/**
+ * Pick a directory the backend will *write* to.
+ *
+ * Desktop only: a browser cannot name a host folder the backend could write
+ * into, so callers keep the field typeable and hide the button.
+ */
+export async function pickOutputDirectory(
+  title: string = "Select Output Directory",
+): Promise<string | null> {
+  if (!isTauriEnvironment()) {
+    return null;
+  }
+
+  return pickViaTauri(title, true);
 }
 
 /** Result of a lifecycle command, surfaced verbatim in the gate. */

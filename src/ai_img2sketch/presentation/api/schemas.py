@@ -86,3 +86,34 @@ class BatchSketchResult(BaseModel):
 
     input_dir: str
     items: list[BatchSketchItem]
+
+
+class StoreMediaRequest(BaseModel):
+    """Payload of ``POST /api/v1/media``.
+
+    Base64 inside JSON rather than multipart: the client speaks one JSON
+    transport (oRPC) for every call, and a browser-selected photo is small
+    enough that the encoding overhead does not matter.
+
+    ``directory`` lets several uploads share one folder, which is what a batch
+    run needs; it is a client-chosen bucket name, so it is strictly validated.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    filename: str = Field(min_length=1, max_length=255)
+    content_base64: str = Field(min_length=1)
+    directory: str | None = Field(
+        default=None,
+        max_length=32,
+        pattern=r"^[a-z0-9][a-z0-9-]*$",
+        description="Bucket so several uploads can land in one folder",
+    )
+
+
+class StoredMedia(BaseModel):
+    """Result of ``POST /api/v1/media``: a path the backend can read right away."""
+
+    model_config = ConfigDict(frozen=True)
+
+    path: str

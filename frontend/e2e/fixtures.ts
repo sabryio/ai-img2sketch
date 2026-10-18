@@ -30,6 +30,9 @@ export const OUTPUT_DIR = join(OUTPUT_ROOT, "e2e");
 /** A directory that exists but holds no images (422 case). */
 export const EMPTY_DIR = join(WORKSPACE, "empty");
 
+/** Where `POST /api/v1/media` stages browser-picked files (host side). */
+export const UPLOADS_DIR = join(MEDIA_ROOT, "uploads");
+
 /** Image used by the single-sketch spec (host path). */
 export const SINGLE_IMAGE = join(BATCH_DIR, "hand-mask.png");
 
@@ -58,6 +61,21 @@ export function hostPathOf(displayed: string): string {
   return join(REPO_ROOT, displayed.replace(/^\.\//, ""));
 }
 
+/**
+ * Host path behind a path the *backend* reported (`/app/media/...`), which is
+ * where uploads land before the UI maps them back for display.
+ */
+export function hostPathFromBackend(backendPath: string): string {
+  const normalized = toPosix(backendPath);
+  if (normalized.startsWith("/app/media/")) {
+    return join(MEDIA_ROOT, normalized.slice("/app/media/".length));
+  }
+  if (normalized.startsWith("/app/output/")) {
+    return join(OUTPUT_ROOT, normalized.slice("/app/output/".length));
+  }
+  throw new Error(`Not inside a compose mount: ${backendPath}`);
+}
+
 /** The path the container sees for one of the mounts (`/app/media/...`). */
 export function containerPath(hostPath: string): string {
   const rel = relative(REPO_ROOT, hostPath).replaceAll("\\", "/");
@@ -83,6 +101,9 @@ export function toPosix(path: string): string {
 export function ensureFixtures(): void {
   rmSync(WORKSPACE, { recursive: true, force: true });
   rmSync(OUTPUT_DIR, { recursive: true, force: true });
+  // Uploads are staged by the app during a run, so the next run starts clean
+  // instead of accumulating one folder per folder pick.
+  rmSync(UPLOADS_DIR, { recursive: true, force: true });
   mkdirSync(BATCH_DIR, { recursive: true });
   mkdirSync(OUTPUT_DIR, { recursive: true });
   mkdirSync(EMPTY_DIR, { recursive: true });

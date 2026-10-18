@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { EventDataSchema } from "./contract";
+import {
+  EventDataSchema,
+  StoredMediaSchema,
+  StoreMediaRequestSchema,
+} from "./contract";
 
 /**
  * Fixtures are exactly what the backend publishes (see the event catalogue in
@@ -69,5 +73,59 @@ describe("EventDataSchema", () => {
     expect(
       EventDataSchema.safeParse({ image: "a", output_path: "b" }).success,
     ).toBe(false);
+  });
+});
+
+describe("StoreMediaRequestSchema", () => {
+  it("accepts a single image without a bucket", () => {
+    const parsed = StoreMediaRequestSchema.safeParse({
+      filename: "portrait.png",
+      content_base64: "AQID",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it("accepts the bucket a folder upload uses", () => {
+    const parsed = StoreMediaRequestSchema.safeParse({
+      filename: "portrait.png",
+      content_base64: "AQID",
+      directory: "a1b2c3",
+    });
+
+    expect(parsed.success).toBe(true);
+  });
+
+  it.each(["../escape", "Upper", "with/slash", "", "-leading-dash"])(
+    "rejects the unusable bucket %o the API would refuse",
+    (directory) => {
+      expect(
+        StoreMediaRequestSchema.safeParse({
+          filename: "a.png",
+          content_base64: "AQID",
+          directory,
+        }).success,
+      ).toBe(false);
+    },
+  );
+
+  it("rejects an empty body", () => {
+    expect(
+      StoreMediaRequestSchema.safeParse({ filename: "", content_base64: "" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("StoredMediaSchema", () => {
+  it("accepts the path the backend reports", () => {
+    expect(
+      StoredMediaSchema.safeParse({ path: "/app/media/uploads/a-1f2e.png" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects an empty path, which could never be submitted", () => {
+    expect(StoredMediaSchema.safeParse({ path: "" }).success).toBe(false);
   });
 });

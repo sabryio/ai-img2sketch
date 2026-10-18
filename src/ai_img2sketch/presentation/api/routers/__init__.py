@@ -10,6 +10,12 @@ from __future__ import annotations
 
 from .events import create_events_router
 from .health import create_health_router
+from .media import create_media_router
 from .sketches import create_sketches_router
 
-__all__ = ["create_events_router", "create_health_router", "create_sketches_router"]
+__all__ = [
+    "create_events_router",
+    "create_health_router",
+    "create_media_router",
+    "create_sketches_router",
+]

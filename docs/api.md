@@ -22,6 +22,7 @@ internet.
 | Endpoint | Method | Purpose |
 |---|---|---|
 | `/health` | GET | Liveness probe used by Docker / the shell |
+| `/media` | POST | Stage an uploaded image so the backend can read it |
 | `/sketches` | POST | Generate one sketch video from an image |
 | `/sketches/batch` | POST | Generate one video per image in a directory |
 | `/events` | GET | Server-Sent-Events stream of lifecycle events |
@@ -118,6 +119,38 @@ Generate one video per image found directly (non-recursive) inside a folder.
 A failing image is recorded in `items[].error` and does **not** abort the
 batch: partial failures still return `200` — only whole-request failures
 (missing directory, empty folder) use the error mapping above.
+
+---
+
+## `POST /api/v1/media`
+
+Stage an image the client picked, and get back a path the backend can read.
+
+The desktop shell does not need this: it hands over a host path and the compose
+mounts make it readable. A **browser** does — the picked file only exists as
+bytes, and the backend has no access to the client's filesystem. Uploads land
+under `<APP_MEDIA_DIR>/uploads` (in the container: `/app/media/uploads`), which
+is the mounted volume, so the returned path is usable as-is.
+
+### Request body — `StoreMediaRequest`
+
+| Field | Type | Required | Constraints | Default | Notes |
+|---|---|---|---|---|---|
+| `filename` | string | yes | 1–255 chars | — | Hint only; sanitized, and the name is made unique |
+| `content_base64` | string | yes | valid base64, decoded ≤ 25 MiB | — | The file itself |
+| `directory` | string | no | `^[a-z0-9][a-z0-9-]*$`, ≤ 32 chars | top of `uploads/` | Bucket so several uploads share one folder (batch runs) |
+
+Accepted types are the ones the image loader reads: `png`, `jpg`, `jpeg`,
+`webp`, `bmp`. Anything else is a `422`.
+
+### Response `200` — `StoredMedia`
+
+```json
+{ "path": "/app/media/uploads/portrait-3f9c1a2b.png" }
+```
+
+The path is absolute **as the server sees it**; use it verbatim as
+`image_path` (single) or as the bucket folder for `input_dir` (batch).
 
 ---
 
@@ -220,6 +253,7 @@ Anonymous comments (`: \n\n`) are handled by the browser and never dispatched.
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port (1–65535) |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`); must be the path the server can read (the container sets `/app/media`) |
 | `APP_CORS_ORIGINS` | `["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]` | JSON list of allowed CORS origins |
 
 CORS allows credentials and all methods/headers for the listed origins; the

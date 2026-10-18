@@ -13,9 +13,10 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
-import { useElapsed, useGenerateSketch } from "../hooks";
+import { useElapsed, useGenerateSketch, useStoreMedia } from "../hooks";
 import type { SketchOptions } from "../rpc/contract";
 import { toAppError } from "../lib/errors";
+import { stageFiles } from "../lib/media";
 import {
   mapBackendPathToHost,
   mapHostPathToBackend,
@@ -24,7 +25,7 @@ import {
 import {
   convertPathToAssetUrl,
   copyHostFile,
-  openImageFileDialog,
+  pickImageFile,
 } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
@@ -47,6 +48,7 @@ const DEFAULT_CONFIG: SketchOptions = {
 export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => {
   const { mode, pathConfig } = useBackendStore();
   const addToast = useNotificationsStore((state) => state.addToast);
+  const storeMedia = useStoreMedia();
 
   const [imagePath, setImagePath] = useState<string>("");
   const [outputDir, setOutputDir] = useState<string>("");
@@ -55,6 +57,8 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   const [handMaskPath, setHandMaskPath] = useState<string>("");
   const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
   const [errorDismissed, setErrorDismissed] = useState(false);
+  /** True while a browser-picked file is being uploaded to the media volume. */
+  const [isStaging, setIsStaging] = useState(false);
   const [videoAssetUrl, setVideoAssetUrl] = useState<string>("");
   const [videoFailedToLoad, setVideoFailedToLoad] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
@@ -114,11 +118,43 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   }, [resolvedHostPath]);
 
   const handlePickImage = async () => {
-    const picked = await openImageFileDialog();
-    if (picked) {
-      setImagePath(picked);
+    const picked = await pickImageFile();
+    if (!picked) {
+      return;
+    }
+
+    // Desktop: the shell handed over a host path, which submit() stages.
+    if (picked.path) {
+      setImagePath(picked.path);
       setErrorDismissed(false);
       sketch.reset();
+      return;
+    }
+
+    // Browser: the file exists only as bytes, so send them to the media volume
+    // and keep the path the backend reported back — it is already readable.
+    if (!picked.file) {
+      return;
+    }
+
+    setIsStaging(true);
+    try {
+      const [storedPath] = await stageFiles([picked.file], (input) =>
+        storeMedia.mutateAsync(input),
+      );
+      setImagePath(storedPath);
+      setErrorDismissed(false);
+      sketch.reset();
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not stage the image",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setIsStaging(false);
     }
   };
 
@@ -258,11 +294,15 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
             <button
               type="button"
               onClick={handlePickImage}
-              disabled={sketch.isPending}
+              disabled={sketch.isPending || isStaging}
               className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
             >
-              <Upload className="w-4 h-4" />
-              Pick Image
+              {isStaging ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              {isStaging ? "Uploading…" : "Pick Image"}
             </button>
           </div>
 

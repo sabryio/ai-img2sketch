@@ -10,7 +10,15 @@ import {
   X,
 } from "lucide-react";
 import type { SketchOptions } from "../rpc/contract";
-import { openDirectoryDialog, openImageFileDialog } from "../lib/tauri";
+import { useStoreMedia } from "../hooks";
+import { toAppError } from "../lib/errors";
+import { stageFiles } from "../lib/media";
+import {
+  isTauriEnvironment,
+  pickImageFile,
+  pickOutputDirectory,
+} from "../lib/tauri";
+import { useNotificationsStore } from "../stores/notifications";
 
 interface AdvancedConfigFormProps {
   config: SketchOptions;
@@ -41,6 +49,10 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showRarelyTouched, setShowRarelyTouched] = useState(false);
+  const addToast = useNotificationsStore((state) => state.addToast);
+  const storeMedia = useStoreMedia();
+  /** Only the desktop shell can hand over a folder the backend may write to. */
+  const isDesktop = isTauriEnvironment();
 
   const updateField = <K extends keyof SketchOptions>(
     key: K,
@@ -53,40 +65,63 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   };
 
   const handlePickOutputDir = async () => {
-    const picked = await openDirectoryDialog("Select Output Directory");
+    const picked = await pickOutputDirectory("Select Output Directory");
     if (picked) {
       onChangeOutputDir(picked);
     }
   };
 
-  const handlePickObjectMask = async () => {
-    if (!onChangeObjectMaskPath) return;
-    const picked = await openImageFileDialog({
-      title: "Select Object Mask Image",
-    });
-    if (picked) {
-      onChangeObjectMaskPath(picked);
+  /**
+   * Pick one optional asset image. The desktop shell yields a path directly; a
+   * browser yields bytes, which are staged in the media volume so the backend
+   * can read them.
+   */
+  const stagePickedImage = async (
+    title: string,
+    apply: ((path: string) => void) | undefined,
+  ) => {
+    if (!apply) {
+      return;
     }
+
+    const picked = await pickImageFile({ title });
+    if (!picked) {
+      return;
+    }
+    if (picked.path) {
+      apply(picked.path);
+      return;
+    }
+    if (!picked.file) {
+      return;
+    }
+
+    try {
+      const [storedPath] = await stageFiles([picked.file], (input) =>
+        storeMedia.mutateAsync(input),
+      );
+      apply(storedPath);
+    } catch (error) {
+      const appError = toAppError(error);
+      addToast({
+        type: "error",
+        title: "Could not stage the image",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    }
+  };
+
+  const handlePickObjectMask = async () => {
+    await stagePickedImage("Select Object Mask Image", onChangeObjectMaskPath);
   };
 
   const handlePickHandImage = async () => {
-    if (!onChangeHandImagePath) return;
-    const picked = await openImageFileDialog({
-      title: "Select Drawing Hand Image",
-    });
-    if (picked) {
-      onChangeHandImagePath(picked);
-    }
+    await stagePickedImage("Select Drawing Hand Image", onChangeHandImagePath);
   };
 
   const handlePickHandMask = async () => {
-    if (!onChangeHandMaskPath) return;
-    const picked = await openImageFileDialog({
-      title: "Select Hand Mask Image",
-    });
-    if (picked) {
-      onChangeHandMaskPath(picked);
-    }
+    await stagePickedImage("Select Hand Mask Image", onChangeHandMaskPath);
   };
 
   return (
@@ -126,15 +161,17 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
                 placeholder="Leave blank for default (e.g. ./output)"
                 className="flex-1 px-3 py-2 text-xs bg-zinc-900 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono"
               />
-              <button
-                type="button"
-                onClick={handlePickOutputDir}
-                className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1.5 transition-colors border border-zinc-700"
-                title="Browse folder"
-              >
-                <Folder className="w-3.5 h-3.5" />
-                Browse
-              </button>
+              {isDesktop && (
+                <button
+                  type="button"
+                  onClick={handlePickOutputDir}
+                  className="px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs flex items-center gap-1.5 transition-colors border border-zinc-700"
+                  title="Browse folder"
+                >
+                  <Folder className="w-3.5 h-3.5" />
+                  Browse
+                </button>
+              )}
               {outputDir && (
                 <button
                   type="button"
@@ -150,6 +187,14 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
               Where generated MP4 files are written. In Docker mode, mapped to{" "}
               <code className="font-mono text-zinc-400">/app/output</code>.
             </p>
+            {!isDesktop && (
+              <p className="text-[11px] text-zinc-500">
+                Type the folder the backend writes into (e.g.{" "}
+                <code className="font-mono text-zinc-400">./output/batch</code>
+                ). A browser cannot pick a host folder the server can write to —
+                the desktop app adds that picker.
+              </p>
+            )}
           </div>
 
           {/* Primary Numeric Parameters Grid */}

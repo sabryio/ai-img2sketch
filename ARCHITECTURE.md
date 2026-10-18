@@ -62,6 +62,7 @@ on abstractions it defines itself.
 - **ObjectMaskLoader**: load ordered object masks
 - **SketchVideoGenerator**: generate one sketch video (implemented by the single-image use case)
 - **VideoWriter** / **VideoWriterFactory**: write frames
+- **BlobStore**: stage bytes a client uploaded and report the path they landed on
 
 These are `typing.Protocol` definitions. The application never imports
 infrastructure; infrastructure imports the ports.
@@ -104,6 +105,9 @@ or the filesystem lives here.
   implements `VideoWriterFactory`
 - **AsyncEventBus** (in `events/`) implements `EventPublisher` (write side) and
   `EventStream` (read side) — the in-process bus backing the SSE transport
+- **MediaStore** (in `storage/`) implements `BlobStore` — sanitizes an upload's
+  name, makes it unique and writes it under `<media root>/uploads`, which is the
+  volume the container mounts, so the reported path is readable as-is
 - **`sse/`**: `ORPCSseStream` — framework-agnostic encoder for the
   oRPC-compatible wire format (comments/keep-alives, `id`/`data` message
   frames, `close`/`error` frames); see `docs/orpc-sse-wire-format.md`
@@ -124,9 +128,9 @@ or the filesystem lives here.
   - `app.py` — `create_app()` factory (CORS from `ApiSettings`, lifespan that
     pushes a terminal `close` event on shutdown) plus a module-level `app` for
     `uvicorn ai_img2sketch.presentation.api.app:app`
-  - `routers/` — `create_health_router()`, `create_sketches_router()` and
-    `create_events_router()`, each built by a factory injecting dependencies,
-    mounted under `/api/v1`
+  - `routers/` — `create_health_router()`, `create_media_router()`,
+    `create_sketches_router()` and `create_events_router()`, each built by a
+    factory injecting dependencies, mounted under `/api/v1`
   - `schemas.py` — request/response DTOs translated into domain value objects;
     every CLI option is settable per request (plus `black_pixel_threshold` and
     custom hand assets), making the API a superset of the CLI
@@ -190,6 +194,7 @@ GenerateVideosFromDirectoryUseCase  (folder)
     ↓ delegates each image to the single generator via the SketchVideoGenerator port
 
 FastAPI (HTTP interface adapters)
+    POST /api/v1/media          → decodes the client's upload → BlobStore → backend-readable path
     POST /api/v1/sketches      → parses DTO → VideoConfig → use case (in a worker thread)
                                  → publishes sketch.* events through EventPublisher
     POST /api/v1/sketches/batch → BatchSummary → BatchSketchResult

@@ -13,6 +13,9 @@ services:
       APP_HOST: 0.0.0.0
       APP_PORT: 8000
       APP_LOG_LEVEL: info
+      # Uploads picked in the webview are staged in the mounted media volume,
+      # so the path the API returns is immediately readable by the container.
+      APP_MEDIA_DIR: /app/media
       APP_CORS_ORIGINS: >
         ["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]
     volumes:

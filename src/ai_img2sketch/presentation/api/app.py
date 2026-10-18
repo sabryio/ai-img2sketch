@@ -18,7 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from ...infrastructure.config.settings import ApiSettings, load_settings
 from ...infrastructure.events.async_event_bus import AsyncEventBus
-from .routers import create_events_router, create_health_router, create_sketches_router
+from ...infrastructure.storage.media_store import MediaStore
+from .routers import (
+    create_events_router,
+    create_health_router,
+    create_media_router,
+    create_sketches_router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +78,7 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(create_health_router(), prefix=_API_PREFIX)
+    app.include_router(create_media_router(MediaStore(settings.media_dir)), prefix=_API_PREFIX)
     app.include_router(create_sketches_router(publisher=event_bus), prefix=_API_PREFIX)
     app.include_router(create_events_router(event_stream=event_bus), prefix=_API_PREFIX)
     return app

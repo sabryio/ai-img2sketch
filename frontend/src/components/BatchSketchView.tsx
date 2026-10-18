@@ -12,15 +12,22 @@ import {
   Play,
   XCircle,
 } from "lucide-react";
-import { useElapsed, useGenerateBatch } from "../hooks";
+import { useElapsed, useGenerateBatch, useStoreMedia } from "../hooks";
 import type { BatchItem, SketchOptions } from "../rpc/contract";
 import { toAppError } from "../lib/errors";
+import {
+  IMAGE_EXTENSIONS,
+  isImageFile,
+  newUploadBucket,
+  parentDirectory,
+  stageFiles,
+} from "../lib/media";
 import {
   mapBackendPathToHost,
   mapHostPathToBackend,
   mapOutputDirToBackend,
 } from "../lib/paths";
-import { convertPathToAssetUrl, openDirectoryDialog } from "../lib/tauri";
+import { convertPathToAssetUrl, pickImageDirectory } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
@@ -54,11 +61,14 @@ function summarize(items: BatchItem[]): BatchSummary {
 export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
   const { mode, pathConfig } = useBackendStore();
   const addToast = useNotificationsStore((state) => state.addToast);
+  const storeMedia = useStoreMedia();
 
   const [inputDir, setInputDir] = useState<string>("");
   const [outputDir, setOutputDir] = useState<string>("");
   const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
   const [errorDismissed, setErrorDismissed] = useState(false);
+  /** True while a browser-picked folder is being uploaded to the media volume. */
+  const [isStaging, setIsStaging] = useState(false);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{
     image: string;
     path: string;
@@ -94,13 +104,57 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
     batch.error && !errorDismissed ? toAppError(batch.error, mode) : null;
 
   const handlePickInputDir = async () => {
-    const picked = await openDirectoryDialog(
-      "Select Input Directory of Images",
-    );
-    if (picked) {
-      setInputDir(picked);
+    const picked = await pickImageDirectory();
+    if (!picked) {
+      return;
+    }
+
+    // Desktop: the shell handed over a folder path the backend can scan itself.
+    if (picked.path) {
+      setInputDir(picked.path);
       setErrorDismissed(false);
       batch.reset();
+      return;
+    }
+
+    // Browser: no folder path exists, so upload the images and point the run at
+    // the folder they landed in.
+    const files = (picked.files ?? []).filter(isImageFile);
+    if (files.length === 0) {
+      addToast({
+        type: "warning",
+        title: "No images in that folder",
+        message: `Pick a folder containing ${IMAGE_EXTENSIONS.join(", ")} files.`,
+      });
+      return;
+    }
+
+    setIsStaging(true);
+    try {
+      const paths = await stageFiles(
+        files,
+        (input) => storeMedia.mutateAsync(input),
+        newUploadBucket(),
+      );
+      const directory = parentDirectory(paths[0]);
+      setInputDir(directory);
+      setErrorDismissed(false);
+      batch.reset();
+      addToast({
+        type: "success",
+        title: "Folder Uploaded",
+        message: `${paths.length} image(s) staged; the backend reads them from ${directory}.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not stage the folder",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setIsStaging(false);
     }
   };
 
@@ -210,11 +264,15 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
             <button
               type="button"
               onClick={handlePickInputDir}
-              disabled={batch.isPending}
+              disabled={batch.isPending || isStaging}
               className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
             >
-              <FolderOpen className="w-4 h-4" />
-              Select Folder
+              {isStaging ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FolderOpen className="w-4 h-4" />
+              )}
+              {isStaging ? "Uploading…" : "Select Folder"}
             </button>
           </div>
 

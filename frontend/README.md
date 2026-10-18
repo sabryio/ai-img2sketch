@@ -39,8 +39,9 @@ src/components/*      render only; they never call `fetch`
 ```
 
 - **REST** — `POST /api/v1/sketches`, `POST /api/v1/sketches/batch`,
-  `GET /api/v1/health`. Request/response DTOs are inferred from the contract, so
-  a backend schema change that is not mirrored here fails `tsc`.
+  `POST /api/v1/media`, `GET /api/v1/health`. Request/response DTOs are inferred
+  from the contract, so a backend schema change that is not mirrored here fails
+  `tsc`.
 - **SSE** — `GET /api/v1/events`, opened by `App.tsx`, which owns both
   subscriptions and passes derived state down:
   - `useLatestEvent()` — a **live query**: `data` is the newest event, plus
@@ -87,6 +88,26 @@ service ships in, and it is what the API expects (the container only reads the
 two mounts). `sidecar` is one click away in Settings for running the
 `img2sketch-api` binary directly.
 
+### Picking files
+
+`Pick Image` / `Select Folder` open the platform's own dialog in both hosts, but
+they can only hand over different things:
+
+- **Desktop app** — the native dialog returns a **host path**, which the mapping
+  above takes from there.
+- **Browser** — a `<input type="file">` returns the **bytes**, and a browser has
+  no way to name a host path. They are uploaded to `POST /api/v1/media`, which
+  writes them into `<APP_MEDIA_DIR>/uploads` (the mounted volume) and answers
+  with the path the backend can read. A folder pick becomes one bucket
+  (`uploads/<bucket>/`) so a batch run gets a real `input_dir`; `src/lib/media.ts`
+  owns the encoding, the bucket name and the size caps.
+
+Either way the form field ends up holding a path the backend can open — never an
+invented one. The same rule applies to the optional mask/hand images in the
+advanced section. The one control a browser cannot offer is the output-directory
+picker (it would need to name a folder the *server* writes to), so that button is
+desktop-only there and the field stays typeable.
+
 ## Runtime configuration
 
 - **API origin** — `src/lib/apiOrigin.ts`: `VITE_API_ORIGIN` at build time,
@@ -95,14 +116,16 @@ two mounts). `sidecar` is one click away in Settings for running the
   cleared so nothing stale survives the switch.
 - **Tauri plugins** — `src/lib/tauri.ts`. File dialogs, `docker compose`,
   the sidecar binary and the asset protocol need the desktop shell; in a browser
-  they degrade explicitly (dialogs ask for a path, lifecycle commands report that
-  they require the desktop app) rather than pretending to have succeeded.
+  they degrade explicitly (the pickers return the picked `File` for the caller to
+  stage, lifecycle commands report that they require the desktop app) rather than
+  pretending to have succeeded.
 
 ## Testing
 
 - `src/**/*.test.ts` — Vitest, no DOM: type-level locks on the hooks (a wrapper
   that collapses oRPC generics to `unknown` compiles, so `tsc` is the assertion),
-  plus pure logic (`errors`, `notifications`, `paths`, `contract`, `toSseState`).
+  plus pure logic (`errors`, `notifications`, `paths`, `media`, `contract`,
+  `toSseState`).
 - `e2e/*.spec.ts` — Playwright against the real stack: the Docker backend
   (`docker compose up -d`, reused when it is already running) and a real
   Chromium. It drives the UI, asserts on the MP4 files written on disk, and
@@ -110,7 +133,10 @@ two mounts). `sidecar` is one click away in Settings for running the
   and the live query's newest event. Inputs are two small images copied out of
   `images/` into `media/e2e/` (and outputs go to `output/e2e/`), because the
   container only sees the compose mounts; both folders are gitignored and the
-  suite never touches the rest of `media/` or `output/`. Run
+  suite never touches the rest of `media/` or `output/`. `e2e/upload.spec.ts`
+  additionally drives the real file dialog (Playwright's `filechooser`), so the
+  browser upload path is covered end to end; it wipes `media/uploads/` first,
+  which is where the app stages those picks. Run
   `docker compose build` first when the backend changed — an already-running
   container is reused, so a stale image would otherwise be under test.
 

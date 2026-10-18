@@ -67,6 +67,7 @@ uv run img2sketch-api        # or: uv run uvicorn ai_img2sketch.presentation.api
 | Endpoint | Method | Description |
 |---|---|---|
 | `/api/v1/health` | GET | Liveness probe (`{"status": "ok"}`) |
+| `/api/v1/media` | POST | Stage a client-uploaded image so the backend can read it |
 | `/api/v1/sketches` | POST | Generate one sketch video from an image |
 | `/api/v1/sketches/batch` | POST | Generate one video per image in a directory |
 | `/api/v1/events` | GET | SSE stream of `sketch.*` / `batch.*` lifecycle events |
@@ -261,6 +262,7 @@ in the UI:
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`); the image sets `/app/media`, the mounted volume |
 | `APP_CORS_ORIGINS` | Tauri origins | JSON list of allowed CORS origins |
 
 ## Health Checks
