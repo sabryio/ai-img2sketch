@@ -37,72 +37,64 @@ export const BackendGate: React.FC = () => {
 
   const [showDiagnostics, setShowDiagnostics] = useState(false);
 
+  const checking = health.isPending || isStartingBackend;
+
   return (
-    <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4 sm:p-6 lg:p-8">
-      <div className="max-w-xl w-full bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl p-6 sm:p-8">
-        {/* Animated Icon & Status Header */}
-        <div className="text-center space-y-3">
-          <div className="inline-flex p-3 rounded-2xl bg-zinc-800/80 border border-zinc-700/60 shadow-inner">
+    <div className="mx-auto w-full max-w-3xl">
+      <section className="region">
+        <div className="p-5">
+          <h2 className="flex items-center gap-2 text-[17px] font-semibold tracking-[-0.01em] text-room-text">
             <RefreshCw
-              className={`w-8 h-8 text-indigo-400 ${
-                health.isPending || isStartingBackend ? "animate-spin" : ""
+              aria-hidden="true"
+              className={`h-4 w-4 text-room-muted ${
+                checking ? "animate-spin" : ""
               }`}
             />
-          </div>
-          <div>
-            <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
-              Connecting to Backend
-            </h2>
-            <p className="text-sm text-zinc-400 mt-1">
-              Targeting{" "}
-              <code className="text-xs font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                {apiOrigin}
-              </code>
-            </p>
-          </div>
+            Connecting to Backend
+          </h2>
+          <p className="mt-1.5 text-micro text-room-muted">
+            Targeting{" "}
+            <span className="mono text-room-text">{apiOrigin}</span>
+          </p>
         </div>
 
-        {/* Retry State Status Badge */}
-        <div className="mt-6 flex items-center justify-between p-3 rounded-xl bg-zinc-950 border border-zinc-800/80 text-xs">
-          <div className="flex items-center gap-2 text-zinc-300">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-            <span>
-              Checking{" "}
-              <code className="font-mono text-zinc-400">/api/v1/health</code>...
-            </span>
-          </div>
-          <span className="text-zinc-500 font-mono">
+        <div className="hairline flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+          <span className="flex items-center gap-2 text-micro text-room-muted">
+            <span
+              aria-hidden="true"
+              className="block h-1.5 w-1.5 rounded-full bg-held-soft"
+            />
+            Checking{" "}
+            <span className="mono text-room-text">/api/v1/health</span>
+          </span>
+          <span className="mono text-micro text-room-faint">
             Attempt #{health.errorUpdateCount + 1}
           </span>
         </div>
 
-        {/* Backend-not-running UX: clear, non-blocking panel */}
-        <div className="mt-6 p-4 rounded-xl bg-zinc-950/90 border border-zinc-800 space-y-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-100">
-                Backend isn't reachable
-              </h3>
-              <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
-                Start Docker Desktop, or run without Docker using the local
-                native sidecar (
-                <code className="font-mono text-zinc-300">img2sketch-api</code>
-                ).
-              </p>
-            </div>
-          </div>
+        <div className="hairline p-5">
+          <h3 className="flex items-center gap-2 text-value font-semibold text-room-text">
+            <AlertCircle
+              aria-hidden="true"
+              className="h-4 w-4 shrink-0 text-alert-soft"
+            />
+            Backend isn't reachable
+          </h3>
+          <p className="mt-1.5 text-micro leading-relaxed text-room-muted">
+            Start Docker Desktop, or run without Docker using the local native
+            sidecar (
+            <span className="mono text-room-text">img2sketch-api</span>).
+          </p>
 
-          {/* Docker Status Probe indicator */}
-          <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
-            <span className="text-zinc-400 flex items-center gap-1.5">
-              <Box className="w-3.5 h-3.5 text-zinc-300" />
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-control border border-room-line bg-room-sunken px-3 py-2 text-micro">
+            <span className="flex items-center gap-1.5 text-room-muted">
+              <Box aria-hidden="true" className="h-3.5 w-3.5 text-room-text" />
               Docker System Status:
             </span>
-            <div className="flex items-center gap-2">
+            <span className="flex items-center gap-2.5">
               <span
                 className={`font-semibold ${
-                  dockerRunning ? "text-emerald-400" : "text-zinc-400"
+                  dockerRunning ? "text-committed-soft" : "text-room-muted"
                 }`}
               >
                 {isCheckingDocker
@@ -114,15 +106,14 @@ export const BackendGate: React.FC = () => {
               <button
                 type="button"
                 onClick={() => probeDocker()}
-                className="text-[11px] text-indigo-400 hover:text-indigo-300 underline"
+                className="btn btn-quiet px-2 py-0.5 text-[11.5px]"
               >
                 Re-probe
               </button>
-            </div>
+            </span>
           </div>
 
-          {/* Action Buttons */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+          <div className="mt-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
             <button
               type="button"
               onClick={() => {
@@ -130,9 +121,9 @@ export const BackendGate: React.FC = () => {
                 startDocker();
               }}
               disabled={isStartingBackend}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-xs shadow-md shadow-indigo-600/20 disabled:opacity-50 transition-colors"
+              className="btn btn-primary"
             >
-              <Box className="w-3.5 h-3.5" />
+              <Box aria-hidden="true" className="h-3.5 w-3.5" />
               {isStartingBackend && mode === "docker"
                 ? "Starting Docker..."
                 : "Start Docker backend"}
@@ -145,9 +136,9 @@ export const BackendGate: React.FC = () => {
                 startSidecar();
               }}
               disabled={isStartingBackend}
-              className="flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-xs border border-zinc-700/80 disabled:opacity-50 transition-colors"
+              className="btn"
             >
-              <Server className="w-3.5 h-3.5" />
+              <Server aria-hidden="true" className="h-3.5 w-3.5" />
               {isStartingBackend && mode === "sidecar"
                 ? "Spawning..."
                 : "Run sidecar"}
@@ -159,89 +150,90 @@ export const BackendGate: React.FC = () => {
               type="button"
               onClick={() => stopDocker()}
               disabled={isStartingBackend}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-zinc-300 font-medium text-xs border border-zinc-800 disabled:opacity-50 transition-colors"
+              className="btn mt-2.5 w-full"
             >
-              <Square className="w-3 h-3" />
+              <Square aria-hidden="true" className="h-3 w-3" />
               Stop Docker backend
             </button>
           )}
 
-          <div className="flex items-center justify-between pt-2 border-t border-zinc-800/80 text-xs">
+          <div className="hairline mt-4 flex flex-wrap items-center justify-between gap-2 pt-3 text-micro">
             <button
               type="button"
               onClick={() => health.refetch()}
               disabled={isStartingBackend}
-              className="flex items-center gap-1.5 text-zinc-400 hover:text-zinc-200"
+              className="btn btn-quiet px-2 py-1"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw aria-hidden="true" className="h-3.5 w-3.5" />
               Retry now
             </button>
-            <span className="text-[11px] text-zinc-600 font-mono">
+            <span className="mono text-[11px] text-room-faint">
               polling every 2s while down
             </span>
           </div>
         </div>
 
-        {/* Command Log output if an action was run */}
         {backendActionLog && (
-          <div className="mt-4 p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-zinc-300 border border-zinc-800 max-h-32 overflow-y-auto">
-            <span className="text-zinc-500 font-bold block mb-1">
-              $ Lifecycle output:
-            </span>
-            {backendActionLog}
+          <div className="hairline p-4">
+            <div className="max-h-32 overflow-y-auto rounded-control border border-room-line bg-room-sunken p-3 font-mono text-[11px] text-room-muted">
+              <span className="mb-1 block font-semibold text-room-faint">
+                $ Lifecycle output:
+              </span>
+              {backendActionLog}
+            </div>
           </div>
         )}
 
-        {/* Collapsible Diagnostics Accordion */}
-        <div className="mt-6 border-t border-zinc-800/80 pt-4">
+        <div className="hairline">
           <button
             type="button"
             onClick={() => setShowDiagnostics(!showDiagnostics)}
-            className="w-full flex items-center justify-between text-xs text-zinc-400 hover:text-zinc-300"
+            aria-expanded={showDiagnostics}
+            className="flex w-full items-center justify-between px-5 py-3.5 text-micro text-room-muted transition-colors hover:text-room-text"
           >
             <span className="flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5" />
+              <Terminal aria-hidden="true" className="h-3.5 w-3.5" />
               Troubleshooting & Diagnostics
             </span>
             {showDiagnostics ? (
-              <ChevronUp className="w-3.5 h-3.5" />
+              <ChevronUp aria-hidden="true" className="h-3.5 w-3.5" />
             ) : (
-              <ChevronDown className="w-3.5 h-3.5" />
+              <ChevronDown aria-hidden="true" className="h-3.5 w-3.5" />
             )}
           </button>
 
           {showDiagnostics && (
-            <div className="mt-3 space-y-3 text-xs">
+            <div className="space-y-3 px-5 pb-5 text-micro">
               {lastHealthError && (
-                <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 font-mono text-[11px]">
-                  <strong className="block text-rose-400">Last Error:</strong>
+                <div className="rounded-control border border-room-line bg-room-sunken p-3 font-mono text-[11px] text-alert-soft">
+                  <strong className="mb-1 block">Last Error:</strong>
                   {lastHealthError}
                 </div>
               )}
 
               {dockerProbeDetails && (
-                <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-400 font-mono text-[11px]">
-                  <strong className="block text-zinc-300 mb-1">
+                <div className="rounded-control border border-room-line bg-room-sunken p-3 font-mono text-[11px] text-room-muted">
+                  <strong className="mb-1 block text-room-text">
                     Docker Probe Details:
                   </strong>
                   {dockerProbeDetails}
                 </div>
               )}
 
-              <div className="text-zinc-400 space-y-1 text-[11px]">
+              <div className="space-y-1 text-[11px] text-room-muted">
                 <p>To start manually from terminal:</p>
-                <div className="p-2 rounded bg-zinc-950 font-mono text-zinc-300 border border-zinc-800 select-all">
+                <div className="select-all rounded-control border border-room-line bg-room-sunken p-2 font-mono text-room-text">
                   docker compose up -d
                 </div>
                 <p className="pt-1">Or verify endpoint with curl:</p>
-                <div className="p-2 rounded bg-zinc-950 font-mono text-zinc-300 border border-zinc-800 select-all">
+                <div className="select-all rounded-control border border-room-line bg-room-sunken p-2 font-mono text-room-text">
                   curl {apiOrigin}/api/v1/health
                 </div>
               </div>
             </div>
           )}
         </div>
-      </div>
+      </section>
     </div>
   );
 };

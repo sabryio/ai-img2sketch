@@ -18,6 +18,12 @@ export interface RunProgress {
   /** Frames written for the current image, and how many it will write. */
   frame?: number;
   totalFrames?: number;
+  /**
+   * A still of the frame just drawn, as a backend path
+   * (`GET /api/v1/artifacts/download?path=…&disposition=inline`). It exists only
+   * while the run does: the backend drops its previews when the render ends.
+   */
+  previewPath?: string;
   /** Position in a batch, 1-based, plus how many images it holds. */
   itemIndex?: number;
   itemTotal?: number;
@@ -75,6 +81,7 @@ export function runProgressFrom(
           label: event.label,
           frame: event.frame,
           totalFrames: event.total_frames,
+          previewPath: event.preview_path,
         };
       case "sketch.completed":
         return { percent: 100 };
@@ -92,6 +99,7 @@ export function runProgressFrom(
         label: event.label,
         frame: event.frame,
         totalFrames: event.total_frames,
+        previewPath: event.preview_path,
         itemIndex: event.item_index,
         itemTotal: event.item_total,
         itemName: event.item_name,

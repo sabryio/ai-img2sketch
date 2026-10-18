@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Check, Radio, Server, Trash2, X } from "lucide-react";
 import type { SseState } from "../hooks";
 import type { EventData } from "../rpc/contract";
@@ -29,6 +29,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [localApiOrigin, setLocalApiOrigin] = useState(apiOrigin);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   const handleSave = (e: React.FormEvent) => {
@@ -50,201 +65,191 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }, 800);
   };
 
+  const radioRow = (selected: boolean) =>
+    `flex cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors ${
+      selected
+        ? "border-onion-dim bg-onion-dim/25"
+        : "border-room-line bg-room-sunken hover:border-room-line-2"
+    }`;
+
   return (
     <div
       role="dialog"
       aria-modal="true"
       aria-labelledby="settings-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-[70] flex justify-end"
     >
-      <div className="max-w-xl w-full bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
-          <div className="flex items-center gap-2">
-            <h3 id="settings-title" className="text-base font-bold text-white">
+      <div aria-hidden="true" className="fade-in absolute inset-0 bg-room/80" />
+
+      <div className="slip-in relative flex h-full w-full max-w-[440px] flex-col border-l border-room-line bg-room-raised">
+        <div className="flex items-start justify-between gap-3 border-b border-room-line px-5 py-4">
+          <div>
+            <h3
+              id="settings-title"
+              className="text-[15px] font-semibold tracking-[-0.01em] text-room-text"
+            >
               Application & Engine Settings
             </h3>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="text-zinc-400 hover:text-white p-1 rounded-lg"
+            className="btn btn-quiet shrink-0 px-2 py-1.5"
             aria-label="Close settings"
           >
-            <X className="w-4 h-4" />
+            <X aria-hidden="true" className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Form Body */}
-        <form onSubmit={handleSave} className="p-6 space-y-6 overflow-y-auto">
-          {/* Engine Endpoint */}
-          <div className="space-y-2">
-            <label className="block text-xs font-semibold text-zinc-300">
-              API Base URL
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={localApiOrigin}
-                onChange={(e) => setLocalApiOrigin(e.target.value)}
-                placeholder={DEFAULT_API_ORIGIN}
-                className="flex-1 px-3 py-2 text-xs bg-zinc-950 border border-zinc-800 rounded-lg text-zinc-200 placeholder-zinc-500 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setLocalApiOrigin(DEFAULT_API_ORIGIN)}
-                className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition-colors"
-                title="Reset to default"
-              >
-                Reset
-              </button>
-            </div>
-            <p className="text-[11px] text-zinc-500">
-              Target address of the FastAPI + SSE backend (Dockerized container
-              or sidecar). Applied immediately on save.
-            </p>
-          </div>
-
-          {/* Execution Mode */}
-          <div className="space-y-2">
-            <label className="block text-xs font-semibold text-zinc-300">
-              Backend Execution Mode
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label
-                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                  mode === "docker"
-                    ? "bg-indigo-600/10 border-indigo-500 text-white"
-                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="executionMode"
-                  value="docker"
-                  checked={mode === "docker"}
-                  onChange={() => setMode("docker")}
-                  className="mt-0.5"
-                />
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-200">
-                    <Box className="w-3.5 h-3.5 text-indigo-400" />
-                    Docker Container
-                  </div>
-                  <p className="text-[11px] text-zinc-500">
-                    No host mounts: files are{" "}
-                    <span className="text-zinc-400">uploaded in</span> and{" "}
-                    <span className="text-zinc-400">downloaded out</span>.
-                  </p>
-                </div>
+        <form onSubmit={handleSave} className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className="px-5 py-5">
+              <label htmlFor="settings-api-origin" className="label">
+                API Base URL
               </label>
-
-              <label
-                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                  mode === "sidecar"
-                    ? "bg-indigo-600/10 border-indigo-500 text-white"
-                    : "bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700"
-                }`}
-              >
+              <div className="mt-2 flex gap-2">
                 <input
-                  type="radio"
-                  name="executionMode"
-                  value="sidecar"
-                  checked={mode === "sidecar"}
-                  onChange={() => setMode("sidecar")}
-                  className="mt-0.5"
+                  id="settings-api-origin"
+                  type="text"
+                  value={localApiOrigin}
+                  onChange={(e) => setLocalApiOrigin(e.target.value)}
+                  placeholder={DEFAULT_API_ORIGIN}
+                  className="field mono"
+                  required
                 />
-                <div className="space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-200">
-                    <Server className="w-3.5 h-3.5 text-emerald-400" />
-                    Host Sidecar
-                  </div>
-                  <p className="text-[11px] text-zinc-500">
-                    Direct local binary (
-                    <code className="font-mono text-zinc-400">
-                      img2sketch-api
-                    </code>
-                    ).
-                  </p>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          {/* SSE Stream Diagnostics & Recent Events */}
-          <div className="space-y-2 pt-2 border-t border-zinc-800">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-zinc-300 flex items-center gap-1.5">
-                <Radio className="w-3.5 h-3.5 text-indigo-400" />
-                Live SSE Stream Log
-              </span>
-              <div className="flex items-center gap-2">
-                <span
-                  data-testid="sse-state"
-                  className="text-[11px] font-mono text-zinc-500"
+                <button
+                  type="button"
+                  onClick={() => setLocalApiOrigin(DEFAULT_API_ORIGIN)}
+                  className="btn shrink-0"
+                  title="Reset to default"
                 >
-                  State: {sseState} &bull; {events.length} events &bull; last:{" "}
-                  {latestEvent?.event ?? "—"}
+                  Reset
+                </button>
+              </div>
+              <p className="mt-2 text-micro leading-relaxed text-room-muted">
+                Target address of the FastAPI + SSE backend (Dockerized
+                container or sidecar). Applied immediately on save.
+              </p>
+            </div>
+
+            <div className="hairline px-5 py-5">
+              <span className="label">Backend Execution Mode</span>
+              <div className="mt-2.5 flex flex-col gap-2">
+                <label className={radioRow(mode === "docker")}>
+                  <input
+                    type="radio"
+                    name="executionMode"
+                    value="docker"
+                    checked={mode === "docker"}
+                    onChange={() => setMode("docker")}
+                    className="mt-0.5 accent-pencil"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-value font-semibold text-room-text">
+                      <Box aria-hidden="true" className="h-3.5 w-3.5 text-onion" />
+                      Docker Container
+                    </span>
+                    <span className="mt-0.5 block text-micro leading-relaxed text-room-muted">
+                      No host mounts: files are{" "}
+                      <span className="text-room-text">uploaded in</span> and{" "}
+                      <span className="text-room-text">downloaded out</span>.
+                    </span>
+                  </span>
+                </label>
+
+                <label className={radioRow(mode === "sidecar")}>
+                  <input
+                    type="radio"
+                    name="executionMode"
+                    value="sidecar"
+                    checked={mode === "sidecar"}
+                    onChange={() => setMode("sidecar")}
+                    className="mt-0.5 accent-pencil"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-value font-semibold text-room-text">
+                      <Server
+                        aria-hidden="true"
+                        className="h-3.5 w-3.5 text-onion"
+                      />
+                      Host Sidecar
+                    </span>
+                    <span className="mt-0.5 block text-micro leading-relaxed text-room-muted">
+                      Direct local binary (
+                      <span className="mono text-room-text">img2sketch-api</span>
+                      ).
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div className="hairline px-5 py-5">
+              <div className="flex items-center justify-between gap-3">
+                <span className="label flex items-center gap-1.5">
+                  <Radio aria-hidden="true" className="h-3.5 w-3.5" />
+                  Live SSE Stream Log
                 </span>
                 {events.length > 0 && (
                   <button
                     type="button"
                     onClick={clearEvents}
-                    className="text-zinc-500 hover:text-zinc-300"
+                    className="btn btn-quiet shrink-0 px-2 py-1"
                     aria-label="Clear event log"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
+                    <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
-            </div>
 
-            <div
-              data-testid="event-log"
-              className="p-2.5 rounded-xl bg-zinc-950 border border-zinc-800 max-h-36 overflow-y-auto font-mono text-[11px] space-y-1"
-            >
-              {events.length === 0 ? (
-                <div className="text-zinc-600 text-center py-2">
-                  No events received yet (stream listening)
-                </div>
-              ) : (
-                events.map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="text-zinc-400 flex items-start gap-2"
-                  >
-                    <span className="text-zinc-600">
-                      {new Date(ev.timestamp).toLocaleTimeString()}
-                    </span>
-                    <span className="text-indigo-400 font-semibold">
-                      {ev.name}:
-                    </span>
-                    <span className="truncate text-zinc-300">
-                      {JSON.stringify(ev.data)}
-                    </span>
+              <div className="mt-2.5">
+                <span
+                  data-testid="sse-state"
+                  className="mono text-micro text-room-muted"
+                >
+                  State: {sseState} &bull; {events.length} events &bull; last:{" "}
+                  {latestEvent?.event ?? "—"}
+                </span>
+              </div>
+
+              <div
+                data-testid="event-log"
+                className="mt-2 max-h-40 space-y-1 overflow-y-auto rounded-control border border-room-line bg-room-sunken p-2.5 font-mono text-[11px]"
+              >
+                {events.length === 0 ? (
+                  <div className="py-2 text-center text-room-faint">
+                    No events received yet (stream listening)
                   </div>
-                ))
-              )}
+                ) : (
+                  events.map((ev) => (
+                    <div
+                      key={ev.id}
+                      className="flex items-start gap-2 text-room-muted"
+                    >
+                      <span className="mono shrink-0 text-room-faint">
+                        {new Date(ev.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="shrink-0 font-semibold text-onion">
+                        {ev.name}:
+                      </span>
+                      <span className="truncate text-room-text">
+                        {JSON.stringify(ev.data)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
 
-          {/* Footer Actions */}
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-zinc-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-            >
+          <div className="flex items-center justify-end gap-2.5 border-t border-room-line px-5 py-4">
+            <button type="button" onClick={onClose} className="btn">
               Cancel
             </button>
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-md shadow-indigo-600/20"
-            >
+            <button type="submit" className="btn btn-primary">
               {savedSuccess ? (
                 <>
-                  <Check className="w-3.5 h-3.5" />
+                  <Check aria-hidden="true" className="h-3.5 w-3.5" />
                   Saved!
                 </>
               ) : (

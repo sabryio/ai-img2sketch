@@ -1,31 +1,538 @@
 @import "tailwindcss";
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: scale(0.98);
+/*
+ * The Lit Sheet — the app's one lit drawing surface in a dim room.
+ *
+ * Colour does jobs, not decoration. `pencil` marks action, selection and
+ * progress wherever the drawing happens; `onion` is the same pencil seen on the
+ * dark room. State colours sit on top of the world only where they carry
+ * meaning: `committed` for a written file, `held` for a stage that changed and
+ * has not been seen, `alert` for a failure.
+ */
+@theme {
+  /* the room */
+  --color-room: #0e1216;
+  --color-room-raised: #14191e;
+  --color-room-sunken: #0b0f13;
+  --color-room-line: #1e252b;
+  --color-room-line-2: #2a3238;
+  --color-room-text: #dbe3ea;
+  --color-room-muted: #8a939c;
+  --color-room-faint: #79828b;
+
+  /* the lit sheet */
+  --color-sheet: #eef2f5;
+  --color-sheet-raised: #f7f9fa;
+  --color-sheet-line: #cfd8de;
+  --color-graphite: #1a2026;
+  --color-graphite-2: #414b54;
+  --color-graphite-3: #5c6670;
+
+  /* pencil, propped against the sheet and lying in the room */
+  --color-pencil: #5b7fc7;
+  --color-pencil-2: #3f5f9e;
+  --color-onion: #8aa2d8;
+  --color-onion-dim: #22304a;
+
+  /* state */
+  --color-committed: #3f9c6a;
+  --color-committed-soft: #6ec99a;
+  --color-held: #d9a227;
+  --color-held-soft: #e0b252;
+  --color-alert: #d8452f;
+  --color-alert-ink: #c53a26;
+  --color-alert-soft: #eb8a74;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    ui-monospace, "SFMono-Regular", "Cascadia Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  /* paper corners are crisp; only the machine's controls round off */
+  --radius-sheet: 3px;
+  --radius-control: 4px;
+
+  --text-label: 10.5px;
+  --text-label--letter-spacing: 0.14em;
+  --text-micro: 11.5px;
+  --text-value: 13px;
+  --text-annot: 22px;
+  --text-annot--line-height: 1.15;
+  --text-annot--letter-spacing: -0.02em;
+  --text-sheet-title: 27px;
+  --text-sheet-title--line-height: 1.15;
+  --text-sheet-title--letter-spacing: -0.02em;
+
+  /* the pencil advances in steps, the way figures are drawn on twos */
+  --ease-step: steps(4, end);
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
   }
-  to {
-    opacity: 1;
-    transform: scale(1);
+
+  html {
+    background-color: var(--color-room);
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* the room's text, and the paper's, selected with the pencil */
+  ::selection {
+    background-color: color-mix(in srgb, var(--color-pencil) 42%, transparent);
+    color: #ffffff;
+  }
+
+  .sheet ::selection {
+    background-color: color-mix(in srgb, var(--color-pencil) 28%, transparent);
+    color: var(--color-graphite);
+  }
+
+  ::placeholder {
+    color: var(--color-room-muted);
+  }
+
+  input,
+  textarea,
+  select {
+    caret-color: var(--color-pencil);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-pencil);
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-room-line-2) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-room-line-2);
+    border: 3px solid var(--color-room);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: #3a444c;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
-@keyframes slideUp {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+@layer components {
+  /* ---- the room ---- */
 
-.animate-fade-in {
-  animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
+  /* a flat ruled region; regions never nest inside one another */
+  .region {
+    background-color: var(--color-room-raised);
+    border: 1px solid var(--color-room-line);
+    border-radius: var(--radius-control);
+  }
 
-.animate-slide-up {
-  animation: slideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  .hairline {
+    border-top: 1px solid var(--color-room-line);
+  }
+
+  /* label left, value right, hairline under — the sheet header's rhythm */
+  .row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--color-room-line);
+  }
+
+  .label {
+    font-size: var(--text-label);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--color-room-faint);
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- the machine's controls ---- */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    font: inherit;
+    font-size: 13px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-room-line-2);
+    background-color: var(--color-room-raised);
+    color: var(--color-room-text);
+    padding: 7px 12px;
+    transition:
+      background-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      color 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .btn:hover:not(:disabled) {
+    background-color: #192027;
+    border-color: #3a444c;
+  }
+
+  .btn:disabled {
+    color: var(--color-room-faint);
+    opacity: 0.5;
+  }
+
+  /* ink on the pencil: the one loud control on the screen */
+  .btn-primary {
+    background-color: var(--color-pencil);
+    border-color: var(--color-pencil);
+    color: #0e1216;
+    font-weight: 650;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: #6c8dd0;
+    border-color: #6c8dd0;
+  }
+
+  .btn-quiet {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--color-room-muted);
+  }
+
+  .btn-quiet:hover:not(:disabled) {
+    background-color: var(--color-room-raised);
+    color: var(--color-room-text);
+  }
+
+  .btn-danger {
+    color: var(--color-alert-soft);
+    border-color: #3a2a26;
+    background-color: transparent;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    background-color: #1c1210;
+    color: #f3a795;
+  }
+
+  .field {
+    font: inherit;
+    font-size: 12.5px;
+    width: 100%;
+    background-color: var(--color-room-sunken);
+    border: 1px solid var(--color-room-line-2);
+    border-radius: var(--radius-control);
+    color: var(--color-room-text);
+    padding: 8px 10px;
+    transition: border-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .field:hover {
+    border-color: #3a444c;
+  }
+
+  .field:focus {
+    border-color: var(--color-pencil);
+  }
+
+  .field:disabled {
+    color: var(--color-room-faint);
+  }
+
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    background-color: var(--color-room-raised);
+    border: 1px solid var(--color-room-line);
+    border-radius: 5px;
+    padding: 2px;
+  }
+
+  .seg > button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--color-room-muted);
+    background-color: transparent;
+    border: 0;
+    border-radius: 3px;
+    padding: 5px 11px;
+    transition:
+      background-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      color 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .seg > button:hover {
+    color: var(--color-room-text);
+  }
+
+  .seg > button[aria-pressed="true"],
+  .seg > button[aria-current="page"] {
+    background-color: #1e252b;
+    color: var(--color-room-text);
+    font-weight: 600;
+  }
+
+  /* state carried as a filled tag, never as a coloured edge */
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: var(--text-label);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    white-space: nowrap;
+  }
+
+  .tag-committed {
+    color: var(--color-committed-soft);
+    background-color: #12241b;
+    border-color: #1d3a2b;
+  }
+
+  .tag-held {
+    color: var(--color-held-soft);
+    background-color: #241d0e;
+    border-color: #3d3115;
+  }
+
+  .tag-alert {
+    color: var(--color-alert-soft);
+    background-color: #2a1512;
+    border-color: #46211b;
+  }
+
+  .tag-pencil {
+    color: #a8bde6;
+    background-color: #141c2b;
+    border-color: var(--color-onion-dim);
+  }
+
+  .tag-quiet {
+    color: var(--color-room-muted);
+    background-color: #171c21;
+    border-color: var(--color-room-line);
+  }
+
+  /* ---- the lit sheet ---- */
+
+  .sheet {
+    background-color: var(--color-sheet);
+    color: var(--color-graphite);
+    border: 1px solid #212a31;
+    border-radius: var(--radius-sheet);
+    /* the sheet is the one object standing above the room's floor */
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+  }
+
+  /* the registration bar: it positions the sheet's content and clips it */
+  .pegbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    height: 22px;
+    padding: 0 14px;
+    background-color: var(--color-graphite);
+    border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  }
+
+  .pegbar > i {
+    display: block;
+    width: 26px;
+    height: 7px;
+    border-radius: 4px;
+    background-color: var(--color-sheet);
+    opacity: 0.42;
+  }
+
+  .sheet-label {
+    font-size: var(--text-label);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--color-graphite-3);
+  }
+
+  .sheet-rule {
+    border-bottom: 1px solid var(--color-sheet-line);
+  }
+
+  .annot {
+    font-size: var(--text-annot);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    color: var(--color-pencil-2);
+  }
+
+  /* the sheet's own controls */
+  .sheet-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    border-radius: var(--radius-control);
+    border: 1px solid var(--color-sheet-line);
+    background-color: var(--color-sheet-raised);
+    color: var(--color-graphite);
+    padding: 6px 11px;
+    transition:
+      background-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1),
+      border-color 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  .sheet-btn:hover:not(:disabled) {
+    background-color: #ffffff;
+    border-color: #b8c3cb;
+  }
+
+  .sheet-btn-solid {
+    background-color: var(--color-graphite);
+    border-color: var(--color-graphite);
+    color: var(--color-sheet);
+    font-weight: 600;
+  }
+
+  .sheet-btn-solid:hover:not(:disabled) {
+    background-color: #2b343d;
+    border-color: #2b343d;
+  }
+
+  .sheet-btn:disabled {
+    color: var(--color-graphite-3);
+    opacity: 0.6;
+  }
+
+  /* ---- the exposure strip: the frame count as ticks beside the drawing ---- */
+
+  .strip-track {
+    position: relative;
+    display: block;
+    width: 18px;
+    height: 2px;
+    background-color: var(--color-sheet-line);
+    border-radius: 2px;
+    transition: width 320ms var(--ease-step);
+  }
+
+  .strip-track[data-state="drawn"] {
+    background-color: var(--color-graphite);
+  }
+
+  .strip-track[data-state="current"] {
+    width: 30px;
+    height: 3px;
+    background-color: var(--color-pencil);
+  }
+
+  /* ---- the ghosts: the render's evidence accumulating on the sheet ---- */
+
+  .ghost {
+    position: absolute;
+    height: 2px;
+    background-color: var(--color-onion);
+    transform-origin: left center;
+    animation: ghost-in 260ms var(--ease-step) both;
+  }
+
+  @keyframes ghost-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  /* a stage that changed and has not been seen yet keeps its mark */
+  .ticks {
+    animation: held-tick 2.4s var(--ease-step) infinite;
+  }
+
+  @keyframes held-tick {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  .fade-in {
+    animation: fade-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(-3px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .slip-in {
+    animation: slip-in 240ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes slip-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
 }

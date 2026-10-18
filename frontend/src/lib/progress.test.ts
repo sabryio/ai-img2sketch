@@ -51,6 +51,38 @@ describe("Reading progress from an event", () => {
     expect(itemDetail(read)).toBeUndefined();
   });
 
+  it("carries the still of the frame the render just drew", () => {
+    const progress: EventData = {
+      event: "sketch.progress",
+      image: "/app/media/a.png",
+      output_path: "/app/media/a.mp4",
+      percent: 45,
+      label: "roof",
+      frame: 108,
+      total_frames: 240,
+      preview_path: "/app/media/previews/9a/frame-0009.jpg",
+    };
+
+    expect(runProgressFrom(progress, "single")?.previewPath).toBe(
+      "/app/media/previews/9a/frame-0009.jpg",
+    );
+  });
+
+  it("carries a batch still too, since a batch draws one image at a time", () => {
+    const progress: EventData = {
+      event: "batch.progress",
+      input_dir: "/app/media/uploads/e2e",
+      percent: 62,
+      item_index: 2,
+      item_total: 5,
+      preview_path: "/app/media/previews/9a/frame-0002.jpg",
+    };
+
+    expect(runProgressFrom(progress, "batch")?.previewPath).toBe(
+      "/app/media/previews/9a/frame-0002.jpg",
+    );
+  });
+
   it("reads the position in a batch", () => {
     const progress: EventData = {
       event: "batch.progress",

@@ -13,12 +13,16 @@ interface ProgressBarProps {
   testId?: string;
 }
 
+/** How many frames the strip resolves a run into before it is exact again. */
+const TICKS = 28;
+
 /**
- * A determinate progress bar that stays honest before the first report.
+ * Progress drawn as frames on the sheet: a strip of frame ticks beside the
+ * drawing, filling in graphite behind the pencil that is drawing now.
  *
  * `percent` is `null` until the backend says something, which is a real state
- * (a run that has started but not yet drawn a frame) and renders as an
- * indeterminate, pulsing track rather than a fake `0%`.
+ * (a run that has started but has not drawn a frame yet) and renders as a strip
+ * holding its breath rather than a fake `0%`.
  */
 export const ProgressBar: React.FC<ProgressBarProps> = ({
   percent,
@@ -28,16 +32,24 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   testId,
 }) => {
   const known = percent !== null;
+  const drawn = known
+    ? Math.round((Math.min(100, Math.max(0, percent)) / 100) * TICKS)
+    : 0;
+
+  const tickColor = (index: number) => {
+    if (!known) return "var(--color-sheet-line)";
+    if (index < drawn) return "var(--color-graphite)";
+    if (index === drawn) return "var(--color-pencil)";
+    return "var(--color-sheet-line)";
+  };
 
   return (
-    <div data-testid={testId} className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-indigo-300 font-medium truncate">
-          {label ?? "Working…"}
-        </span>
+    <div data-testid={testId}>
+      <div className="flex items-baseline justify-between gap-4">
+        <span className="annot truncate">{label ?? "Working…"}</span>
         <span
           data-testid={testId ? `${testId}-percent` : undefined}
-          className="font-mono text-zinc-300 shrink-0"
+          className="mono tnum shrink-0 text-value font-semibold text-graphite-2"
         >
           {known ? `${percent}%` : "—"}
         </span>
@@ -49,18 +61,23 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={known ? percent : undefined}
-        className="h-1.5 rounded-full bg-zinc-800 overflow-hidden"
+        className={`mt-3 flex items-end gap-0.5 ${known ? "" : "ticks"}`}
       >
-        <div
-          className={`h-full rounded-full bg-indigo-500 transition-[width] duration-300 ease-out ${
-            known ? "" : "w-full animate-pulse"
-          }`}
-          style={known ? { width: `${percent}%` } : undefined}
-        />
+        {Array.from({ length: TICKS }, (_, index) => (
+          <i
+            key={index}
+            aria-hidden="true"
+            className="block flex-1 rounded-xs transition-[background-color,height] duration-300 ease-step"
+            style={{
+              backgroundColor: tickColor(index),
+              height: known && index === drawn ? 3 : 2,
+            }}
+          />
+        ))}
       </div>
 
       {(itemDetail || detail) && (
-        <div className="flex items-center justify-between gap-3 text-[11px] font-mono text-zinc-500">
+        <div className="mono mt-2.5 flex items-center justify-between gap-4 text-micro text-graphite-3">
           <span className="truncate">{itemDetail ?? ""}</span>
           <span className="shrink-0">{detail ?? ""}</span>
         </div>

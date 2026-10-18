@@ -46,6 +46,7 @@ import {
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
+import { DrawingCanvas } from "./DrawingCanvas";
 import { OutputFolderField } from "./OutputFolderField";
 import { ProgressBar } from "./ProgressBar";
 
@@ -454,97 +455,107 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
   };
 
   return (
-    <div className="space-y-6">
-      {/* View Title & Mode Information */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-800">
+    <div className="flex min-h-0 flex-1 flex-col space-y-6">
+      {/* Screen title, its purpose, and the execution mode this run targets */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-            <Layers className="w-5 h-5 text-indigo-400" />
+          <h2 className="flex items-center gap-2 text-[19px] font-semibold tracking-[-0.01em] text-room-text">
+            <Layers aria-hidden="true" className="h-4 w-4 text-onion" />
             Batch Image Sketch Processing
           </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className="mt-1 text-micro text-room-muted">
             Process entire folders of images sequentially. Corrupt images are
             recorded without stopping the batch.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
-          <span className="text-zinc-400">Target Mode:</span>
+        <div className="flex items-center gap-2 text-micro text-room-muted">
           <span
-            className={`font-semibold capitalize px-2 py-0.5 rounded text-[11px] ${
-              mode === "docker"
-                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-            }`}
-          >
-            {mode} Mode
-          </span>
+            aria-hidden="true"
+            className="h-1.5 w-1.5 rounded-full"
+            style={{
+              backgroundColor:
+                mode === "docker"
+                  ? "var(--color-onion)"
+                  : "var(--color-committed-soft)",
+            }}
+          />
+          <span>Target Mode:</span>
+          <span className="mono text-room-text">{mode} Mode</span>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Input Directory Selection Card */}
-        <div className="p-5 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl space-y-4">
-          <div className="flex items-center justify-between">
-            <label
-              htmlFor="batch-input-dir"
-              className="text-sm font-semibold text-zinc-200 flex items-center gap-2"
-            >
-              <Folder className="w-4 h-4 text-indigo-400" />
-              Input Images Directory
-              <span className="text-rose-400">*</span>
-            </label>
-            {inputDir && (
-              <span className="text-[11px] text-zinc-500 font-mono">
-                Target Folder
-              </span>
-            )}
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-2.5">
-            <input
-              id="batch-input-dir"
-              type="text"
-              value={inputDir}
-              onChange={(e) => setInputDir(e.target.value)}
-              placeholder="Click 'Select Folder' or paste a folder the backend can read"
-              className="flex-1 px-3.5 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono"
-              required
-            />
-            <button
-              type="button"
-              onClick={handlePickInputDir}
-              disabled={batch.isPending || isStaging}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
-            >
-              {isStaging ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <FolderOpen className="w-4 h-4" />
+        {/* The run's inputs */}
+        <div className="region shrink-0 space-y-4 p-5">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <label
+                htmlFor="batch-input-dir"
+                className="label flex items-center gap-2"
+              >
+                <Folder aria-hidden="true" className="h-3.5 w-3.5" />
+                Input Images Directory
+                <span className="text-alert-soft">*</span>
+              </label>
+              {inputDir && (
+                <span className="mono text-micro text-room-faint">
+                  Target Folder
+                </span>
               )}
-              {isStaging ? "Uploading…" : "Select Folder"}
-            </button>
+            </div>
+
+            <div className="flex flex-col gap-2.5 sm:flex-row">
+              <input
+                id="batch-input-dir"
+                type="text"
+                value={inputDir}
+                onChange={(e) => setInputDir(e.target.value)}
+                placeholder="Click 'Select Folder' or paste a folder the backend can read"
+                className="field mono flex-1"
+                required
+              />
+              <button
+                type="button"
+                onClick={handlePickInputDir}
+                disabled={batch.isPending || isStaging}
+                className="btn shrink-0"
+              >
+                {isStaging ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 animate-spin"
+                  />
+                ) : (
+                  <FolderOpen aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+                {isStaging ? "Uploading…" : "Select Folder"}
+              </button>
+            </div>
           </div>
 
           {/* What the backend will scan, and who has to move the files */}
           {inputDir && (
-            <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 text-xs text-zinc-400 space-y-1">
-              <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span>Backend Directory ({mode}):</span>
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-micro text-room-muted">
+                <Info
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 text-onion"
+                />
+                <span>Backend Path ({mode}):</span>
               </div>
-              <div className="font-mono text-[11px] text-zinc-400 pl-5 space-y-0.5">
+              <div className="mono space-y-0.5 pl-5 text-micro text-room-muted">
                 <div>
-                  Selected: <span className="text-zinc-200">{inputDir}</span>
+                  Selected: <span className="text-room-text">{inputDir}</span>
                 </div>
                 <div>
                   Backend sees:{" "}
-                  <span className="text-indigo-300 font-semibold">
+                  <span className="font-semibold text-onion">
                     {inputPlan.path || "—"}
                   </span>
                 </div>
                 {inputPlan.needsUpload && (
-                  <div className="text-amber-400/90 text-[10px]">
+                  <div className="text-held-soft">
                     &bull; The images are uploaded to the backend when the run
                     starts: the container only reads files it was given.
                   </div>
@@ -555,8 +566,8 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
 
           {/* Files this session put on the backend: the user decides whether they stay */}
           {uploadedInputs.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-              <span className="text-zinc-500">
+            <div className="hairline flex flex-wrap items-center justify-between gap-2 pt-3 text-micro">
+              <span className="text-room-muted">
                 {uploadedInputs.length} file(s) uploaded to the backend this
                 session.
               </span>
@@ -565,16 +576,16 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
                 onClick={handleDeleteUploads}
                 disabled={batch.isPending}
                 data-testid="batch-delete-uploads"
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 border border-zinc-700 transition-colors"
+                className="btn btn-danger"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                 Delete uploads
               </button>
             </div>
           )}
 
           {/* Where the produced videos should go (default: beside each image) */}
-          <div className="pt-3 border-t border-zinc-800/80">
+          <div className="hairline pt-4">
             <OutputFolderField
               id="batch-output-dir"
               value={outputDir}
@@ -582,32 +593,13 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
               plan={outputPlan}
             />
           </div>
-        </div>
 
-        {/* Collapsible Advanced Configuration Form */}
-        <AdvancedConfigForm
-          config={config}
-          onChangeConfig={setConfig}
-          isBatchMode={true}
-        />
-
-        {/* Action Controls, Live Progress & Submit Button */}
-        <div className="space-y-3">
-          {batch.isPending && (
-            <ProgressBar
-              testId="batch-progress"
-              percent={progress?.percent ?? null}
-              label={progress?.label || "Preparing the batch…"}
-              detail={frameDetail(progress)}
-              itemDetail={itemDetail(progress)}
-            />
-          )}
-
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-xs text-zinc-500">
+          {/* Live status of the run, and the primary action */}
+          <div className="hairline flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-micro text-room-muted">
               {batch.isPending ? (
-                <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
-                  <Clock className="w-4 h-4" />
+                <span className="flex items-center gap-2 text-onion">
+                  <Clock aria-hidden="true" className="h-3.5 w-3.5" />
                   Processing batch images... Elapsed: {elapsedSec}s
                 </span>
               ) : (
@@ -618,296 +610,332 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-3 w-full sm:w-auto">
-              {result && (
-                <button
-                  type="button"
-                  onClick={() => batch.reset()}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-                >
-                  Clear Table
-                </button>
+            <button
+              type="submit"
+              disabled={!inputDir.trim() || batch.isPending || !ready}
+              className="btn btn-primary shrink-0"
+            >
+              {batch.isPending ? (
+                <>
+                  <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+                  Processing Batch ({elapsedSec}s)...
+                </>
+              ) : (
+                <>
+                  <Play aria-hidden="true" className="h-3.5 w-3.5" />
+                  Run Batch Generation
+                </>
               )}
-
-              <button
-                type="submit"
-                disabled={!inputDir.trim() || batch.isPending || !ready}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
-              >
-                {batch.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing Batch ({elapsedSec}s)...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 fill-white" />
-                    Run Batch Generation
-                  </>
-                )}
-              </button>
-            </div>
+            </button>
           </div>
         </div>
+
+        {/* Collapsible Advanced Configuration Form */}
+        <AdvancedConfigForm
+          config={config}
+          onChangeConfig={setConfig}
+          isBatchMode={true}
+        />
       </form>
 
-      {/* Error banner */}
+      {/* Error */}
       {appError && (
         <div
           role="alert"
           data-testid="batch-error"
-          className="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-start justify-between gap-3"
+          className="region flex items-start justify-between gap-4 p-4"
         >
           <div className="flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <AlertTriangle
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0 text-alert-soft"
+            />
             <div>
-              <h4 className="text-sm font-bold text-rose-300">
+              <h4 className="text-value font-semibold text-room-text">
                 Batch Processing Error
               </h4>
-              <p className="text-xs text-rose-200 mt-1">{appError.message}</p>
+              <p className="mt-1 text-micro text-alert-soft">
+                {appError.message}
+              </p>
             </div>
           </div>
           <button
             type="button"
             onClick={() => setErrorDismissed(true)}
-            className="text-xs text-rose-400 hover:text-rose-200"
+            className="btn btn-quiet shrink-0"
           >
             Dismiss
           </button>
         </div>
       )}
 
-      {/* Batch Results Table & Summary */}
-      {result && summary && (
-        <div className="rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl overflow-hidden space-y-4 p-5 animate-fade-in">
-          {/* Summary derived from the per-image results */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-xl bg-zinc-950 border border-zinc-800/80">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                <CheckCircle2 className="w-4 h-4" />
+      {((result && summary) || batch.isPending) && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {/* Summary of the whole run, at the head of the stack */}
+          {result && summary && (
+            <div className="flex flex-col gap-3 border-b border-room-line pb-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2
+                  aria-hidden="true"
+                  className="h-4 w-4 shrink-0 text-committed-soft"
+                />
+                <div>
+                  <h3 className="text-value font-semibold text-room-text">
+                    Batch Run Complete
+                  </h3>
+                  <p className="mono text-micro text-room-faint">
+                    Input folder: {result.input_dir}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-sm font-bold text-white">
-                  Batch Run Complete
-                </h3>
-                <p className="text-xs text-zinc-400 font-mono">
-                  Input folder: {result.input_dir}
-                </p>
-              </div>
-            </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <div
-                data-testid="batch-summary"
-                className="flex items-center gap-3 text-xs font-medium"
-              >
-                <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  {summary.succeeded} Succeeded
-                </span>
-                {summary.failed > 0 && (
-                  <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                    {summary.failed} Failed
+              <div className="flex flex-wrap items-center gap-3">
+                <div
+                  data-testid="batch-summary"
+                  className="flex flex-wrap items-center gap-x-4 gap-y-1 text-micro"
+                >
+                  <span className="tnum font-medium text-committed-soft">
+                    {summary.succeeded} Succeeded
                   </span>
-                )}
-                <span className="px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
-                  Total: {summary.total}
-                </span>
+                  {summary.failed > 0 && (
+                    <span className="tnum font-medium text-alert-soft">
+                      {summary.failed} Failed
+                    </span>
+                  )}
+                  <span className="tnum text-room-muted">
+                    Total: {summary.total}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => batch.reset()}
+                  className="btn btn-quiet"
+                >
+                  Clear Table
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleDeleteAll}
+                  disabled={
+                    Boolean(deletingPath) ||
+                    remainingOutputs(result.items, deletedOutputs).length === 0
+                  }
+                  data-testid="batch-delete-all"
+                  title="Delete every produced video from the backend"
+                  className="btn btn-danger"
+                >
+                  {deletingPath === "all" ? (
+                    <Loader2 aria-hidden="true" className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  )}
+                  {deletingPath === "all" ? "Deleting…" : "Delete all"}
+                </button>
               </div>
-
-              <button
-                type="button"
-                onClick={handleDeleteAll}
-                disabled={
-                  Boolean(deletingPath) ||
-                  remainingOutputs(result.items, deletedOutputs).length === 0
-                }
-                data-testid="batch-delete-all"
-                title="Delete every produced video from the backend"
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 text-xs font-medium border border-zinc-700 transition-colors"
-              >
-                {deletingPath === "all" ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
-                )}
-                {deletingPath === "all" ? "Deleting…" : "Delete all"}
-              </button>
             </div>
-          </div>
+          )}
 
-          {/* Items Table */}
-          <div className="border border-zinc-800 rounded-xl overflow-hidden overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-zinc-950/80 border-b border-zinc-800 text-zinc-400 font-semibold uppercase text-[10px] tracking-wider">
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Image Filename</th>
-                  <th className="py-3 px-4">
-                    Output Video ({mode === "sidecar" ? "host" : "backend"})
-                  </th>
-                  <th className="py-3 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800/80 font-mono">
-                {result.items.map((item, idx) => {
-                  const hasError = Boolean(item.error);
-                  const outputPath = item.output_path ?? "";
-                  const isDeleted =
-                    Boolean(outputPath) && deletedOutputs.includes(outputPath);
+          {/* The image being drawn right now */}
+          {batch.isPending && (
+            <section className="sheet slip-in flex shrink-0 flex-col lg:flex-1">
+              <div className="pegbar">
+                <i />
+                <i />
+                <i />
+              </div>
+              <div className="flex min-h-0 flex-1 flex-col p-5">
+                <DrawingCanvas
+                  percent={progress?.percent ?? null}
+                  frameSrc={
+                    progress?.previewPath
+                      ? artifactDownloadUrl(progress.previewPath, "inline")
+                      : undefined
+                  }
+                  className="aspect-video lg:aspect-auto lg:min-h-[220px] lg:flex-1"
+                  empty={
+                    <span className="mono text-micro text-graphite-3">
+                      {progress?.itemName ?? ""}
+                    </span>
+                  }
+                />
+                <div className="mt-4">
+                  <ProgressBar
+                    testId="batch-progress"
+                    percent={progress?.percent ?? null}
+                    label={progress?.label || "Preparing the batch…"}
+                    detail={frameDetail(progress)}
+                    itemDetail={itemDetail(progress)}
+                  />
+                </div>
+              </div>
+            </section>
+          )}
 
-                  return (
-                    <tr
-                      key={`${item.image}-${idx}`}
-                      data-testid="batch-row"
-                      className={`transition-colors ${
-                        hasError
-                          ? "bg-rose-500/5 hover:bg-rose-500/10"
-                          : "hover:bg-zinc-800/50"
-                      }`}
-                    >
-                      {/* Status Column */}
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        {hasError ? (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                            <XCircle className="w-3.5 h-3.5" />
-                            Failed
-                          </span>
-                        ) : isDeleted ? (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
-                            <Trash2 className="w-3.5 h-3.5" />
-                            Deleted
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                            Success
-                          </span>
-                        )}
-                      </td>
+          {/* Every image in the run, in the order the backend scanned them */}
+          {result && summary && (
+            <div className="fade-in min-h-0 flex-1 overflow-y-auto">
+              {result.items.map((item, idx) => {
+                const hasError = Boolean(item.error);
+                const outputPath = item.output_path ?? "";
+                const isDeleted =
+                  Boolean(outputPath) && deletedOutputs.includes(outputPath);
 
-                      {/* Image Name */}
-                      <td className="py-3 px-4 font-medium text-zinc-200">
+                return (
+                  <div
+                    key={`${item.image}-${idx}`}
+                    data-testid="batch-row"
+                    className="flex flex-col gap-1.5 border-b border-room-line py-3"
+                  >
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+                      {hasError ? (
+                        <span className="tag tag-alert normal-case">
+                          <XCircle aria-hidden="true" className="h-3 w-3" />
+                          Failed
+                        </span>
+                      ) : isDeleted ? (
+                        <span className="tag tag-quiet normal-case">
+                          <Trash2 aria-hidden="true" className="h-3 w-3" />
+                          Deleted
+                        </span>
+                      ) : (
+                        <span className="tag tag-committed normal-case">
+                          <CheckCircle2 aria-hidden="true" className="h-3 w-3" />
+                          Success
+                        </span>
+                      )}
+
+                      <span className="mono min-w-0 flex-1 truncate text-value text-room-text">
                         {item.image}
-                      </td>
+                      </span>
 
-                      {/* Output or Error Column */}
-                      <td className="py-3 px-4 max-w-md truncate">
-                        {hasError ? (
-                          <span className="text-rose-400 text-xs font-sans">
-                            {item.error}
-                          </span>
-                        ) : (
-                          <span
-                            data-testid="batch-output-path"
-                            className={
-                              isDeleted
-                                ? "text-zinc-600 text-[11px] line-through"
-                                : "text-zinc-400 text-[11px]"
+                      {!hasError && outputPath && !isDeleted && (
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedPreviewVideo({
+                                image: item.image,
+                                path: outputPath,
+                              })
                             }
+                            className="btn btn-quiet"
                           >
-                            {outputPath || "—"}
-                          </span>
-                        )}
-                      </td>
+                            <Film aria-hidden="true" className="h-3.5 w-3.5" />
+                            Preview
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadItem(item)}
+                            disabled={Boolean(downloadingPath)}
+                            data-testid="batch-download"
+                            className="btn"
+                          >
+                            {downloadingPath === outputPath ? (
+                              <Loader2
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5 animate-spin"
+                              />
+                            ) : (
+                              <Download aria-hidden="true" className="h-3.5 w-3.5" />
+                            )}
+                            {downloadingPath === outputPath
+                              ? "Preparing…"
+                              : "Download"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item)}
+                            disabled={Boolean(deletingPath)}
+                            data-testid="batch-delete"
+                            title="Delete this video from the backend"
+                            className="btn btn-danger"
+                          >
+                            {deletingPath === outputPath ? (
+                              <Loader2
+                                aria-hidden="true"
+                                className="h-3.5 w-3.5 animate-spin"
+                              />
+                            ) : (
+                              <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                            )}
+                            {deletingPath === outputPath ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
-                      {/* Action Column */}
-                      <td className="py-3 px-4 text-right whitespace-nowrap">
-                        {!hasError && outputPath && !isDeleted ? (
-                          <div className="inline-flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSelectedPreviewVideo({
-                                  image: item.image,
-                                  path: outputPath,
-                                })
-                              }
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-sans text-xs transition-colors border border-indigo-500/30"
-                            >
-                              <Film className="w-3.5 h-3.5" />
-                              Preview
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDownloadItem(item)}
-                              disabled={Boolean(downloadingPath)}
-                              data-testid="batch-download"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 font-sans text-xs transition-colors border border-zinc-700"
-                            >
-                              {downloadingPath === outputPath ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Download className="w-3.5 h-3.5" />
-                              )}
-                              {downloadingPath === outputPath
-                                ? "Preparing…"
-                                : "Download"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteItem(item)}
-                              disabled={Boolean(deletingPath)}
-                              data-testid="batch-delete"
-                              title="Delete this video from the backend"
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 font-sans text-xs transition-colors border border-zinc-700"
-                            >
-                              {deletingPath === outputPath ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3.5 h-3.5" />
-                              )}
-                              {deletingPath === outputPath
-                                ? "Deleting…"
-                                : "Delete"}
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="text-zinc-600 text-[11px]">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                    <div className="flex min-w-0 items-baseline gap-2">
+                      <span className="label shrink-0">
+                        {hasError ? "Error" : "Output"}
+                      </span>
+                      {hasError ? (
+                        <span className="min-w-0 flex-1 truncate text-micro text-alert-soft">
+                          {item.error}
+                        </span>
+                      ) : (
+                        <span
+                          data-testid="batch-output-path"
+                          className={`mono min-w-0 flex-1 truncate text-micro ${
+                            isDeleted
+                              ? "text-room-faint line-through"
+                              : "text-room-muted"
+                          }`}
+                        >
+                          {outputPath || "—"}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
       {/* Video Modal Preview for Batch Items */}
       {selectedPreviewVideo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="max-w-2xl w-full bg-zinc-900 border border-zinc-800 rounded-2xl p-5 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h4 className="text-sm font-bold text-white">
+        <div className="fade-in fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <section className="sheet flex w-full max-w-2xl flex-col">
+            <div className="pegbar">
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="flex items-start justify-between gap-4 border-b border-sheet-line p-3">
+              <div className="min-w-0">
+                <h4 className="truncate text-value font-semibold text-graphite">
                   Preview Video: {selectedPreviewVideo.image}
                 </h4>
-                <p className="text-xs text-zinc-400 font-mono truncate max-w-md">
+                <p className="mono truncate text-micro text-graphite-3">
                   {selectedPreviewVideo.path}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSelectedPreviewVideo(null)}
-                className="text-zinc-400 hover:text-white text-xs px-2.5 py-1 rounded-lg bg-zinc-800"
+                className="sheet-btn shrink-0"
               >
                 Close
               </button>
             </div>
 
-            <div className="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center border border-zinc-800">
-              {/* Streamed from the API: a container path is not playable directly. */}
-              <video
-                src={artifactDownloadUrl(selectedPreviewVideo.path, "inline")}
-                controls
-                autoPlay
-                className="w-full h-full object-contain"
-              >
-                Video not supported
-              </video>
+            <div className="p-3">
+              <div className="aspect-video overflow-hidden rounded-sheet border border-sheet-line bg-graphite">
+                {/* Streamed from the API: a container path is not playable directly. */}
+                <video
+                  src={artifactDownloadUrl(selectedPreviewVideo.path, "inline")}
+                  controls
+                  autoPlay
+                  className="h-full w-full object-contain"
+                >
+                  Video not supported
+                </video>
+              </div>
             </div>
-          </div>
+          </section>
         </div>
       )}
     </div>

@@ -50,8 +50,7 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
-      {/* App Header */}
+    <div className="flex min-h-screen flex-col bg-room font-sans text-room-text lg:h-screen">
       <Header
         activeTab={activeTab}
         onTabChange={setActiveTab}
@@ -60,24 +59,17 @@ export default function App() {
         onRestartStream={restartStream}
       />
 
-      {/* Main Content Area */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="mx-auto flex min-h-0 w-full max-w-[1680px] flex-1 flex-col px-4 py-6 sm:px-6">
         {!ready ? (
-          /* Startup Gate: Shown while backend is starting or unreachable */
+          /* The room before the backend answers: nothing has been lit yet. */
           <BackendGate />
+        ) : activeTab === "single" ? (
+          <SingleSketchView ready={ready} latestEvent={latest} />
         ) : (
-          /* Main Workspace: Active once GET /api/v1/health is OK */
-          <div className="space-y-6">
-            {activeTab === "single" ? (
-              <SingleSketchView ready={ready} latestEvent={latest} />
-            ) : (
-              <BatchSketchView ready={ready} latestEvent={latest} />
-            )}
-          </div>
+          <BatchSketchView ready={ready} latestEvent={latest} />
         )}
       </main>
 
-      {/* Settings Modal */}
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
@@ -85,7 +77,6 @@ export default function App() {
         latestEvent={latest}
       />
 
-      {/* Floating Notification Toasts */}
       <Toasts />
     </div>
   );

@@ -1,16 +1,13 @@
 import React, { useMemo, useState } from "react";
 import {
   AlertTriangle,
-  CheckCircle2,
   Clock,
   Copy,
   Download,
   FileImage,
   Film,
-  Info,
   Loader2,
   Play,
-  Sparkles,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -40,6 +37,7 @@ import {
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
+import { DrawingCanvas } from "./DrawingCanvas";
 import { OutputFolderField } from "./OutputFolderField";
 import { ProgressBar } from "./ProgressBar";
 
@@ -81,6 +79,8 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({
   /** True while a produced video is being deleted from the backend. */
   const [isDeleting, setIsDeleting] = useState(false);
   const [videoFailedToLoad, setVideoFailedToLoad] = useState<boolean>(false);
+  /** The source image URL the artifact route refused, so the sheet falls back. */
+  const [failedSourceUrl, setFailedSourceUrl] = useState<string>("");
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
   const [copiedError, setCopiedError] = useState<boolean>(false);
   /** Container paths this session uploaded, so they can be removed again. */
@@ -404,386 +404,411 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({
 
   const previewUrl = result ? artifactDownloadUrl(result.output_path, "inline") : "";
 
+  /** The selected image, once the backend can serve it without an upload. */
+  const sourceImageUrl =
+    imagePath.trim().length > 0 && !inputPlan.needsUpload
+      ? artifactDownloadUrl(imagePath.trim(), "inline")
+      : "";
+
+  const showsVideo =
+    Boolean(result) && !resultDeleted && !videoFailedToLoad && !sketch.isPending;
+  const showsSourceImage =
+    Boolean(sourceImageUrl) &&
+    sourceImageUrl !== failedSourceUrl &&
+    !showsVideo &&
+    !sketch.isPending;
+
   return (
-    <div className="space-y-6">
-      {/* View Title & Mode Information */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-zinc-800">
-        <div>
-          <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-indigo-400" />
-            Synthesize Sketch Video
-          </h2>
-          <p className="text-xs text-zinc-400 mt-0.5">
-            Convert any 2D image into an animated drawing sketch video with
-            realistic stroke ordering.
-          </p>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-7 lg:grid lg:h-full lg:min-h-0 lg:grid-cols-[392px_minmax(0,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:items-stretch">
+      {/* The sheet header is its own column: it scrolls when the parameters
+          outgrow the window, so the page itself never has to. */}
+      <section className="flex min-w-0 flex-col lg:min-h-0 lg:overflow-y-auto lg:pr-2">
+        <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-room-text">
+          Synthesize Sketch Video
+        </h2>
+        <p className="mt-1.5 text-micro text-room-muted">
+          Convert any 2D image into an animated drawing sketch video with
+          realistic stroke ordering.
+        </p>
 
-        {/* Mode Indicator */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
-          <span className="text-zinc-400">Target Mode:</span>
-          <span
-            className={`font-semibold capitalize px-2 py-0.5 rounded text-[11px] ${
-              mode === "docker"
-                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
-                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-            }`}
-          >
-            {mode} Mode
-          </span>
-          <span className="text-[11px] text-zinc-500 hidden md:inline">
-            {mode === "docker"
-              ? "(Upload in, download out)"
-              : "(Native Direct Host FS)"}
+        <div className="row mt-5 items-center">
+          <span className="label">Target Mode:</span>
+          <span className="flex flex-col items-end gap-1">
+            <span className="tag tag-pencil normal-case">{mode} Mode</span>
+            <span className="text-micro text-room-faint">
+              {mode === "docker"
+                ? "(Upload in, download out)"
+                : "(Native Direct Host FS)"}
+            </span>
           </span>
         </div>
-      </div>
 
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Main Image Selection Card */}
-        <div className="p-5 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-xl space-y-4">
-          <div className="flex items-center justify-between">
-            <label
-              htmlFor="single-image-path"
-              className="text-sm font-semibold text-zinc-200 flex items-center gap-2"
-            >
-              <FileImage className="w-4 h-4 text-indigo-400" />
-              Source Image File
-              <span className="text-rose-400">*</span>
-            </label>
-            {imagePath && (
-              <span className="text-[11px] text-zinc-500 font-mono">
-                Selected
-              </span>
-            )}
-          </div>
+        <form onSubmit={handleSubmit}>
+          <div className="row flex-col items-stretch">
+            <div className="flex items-baseline justify-between gap-3">
+              <label
+                htmlFor="single-image-path"
+                className="label flex items-center gap-1.5"
+              >
+                <FileImage
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 text-onion"
+                />
+                Source Image File
+                <span className="text-alert-soft">*</span>
+              </label>
+              {imagePath && (
+                <span className="text-micro text-room-faint">Selected</span>
+              )}
+            </div>
 
-          <div className="flex flex-col sm:flex-row gap-2.5">
-            <div className="relative flex-1">
+            <div className="mt-2 flex items-center gap-2">
               <input
                 id="single-image-path"
                 type="text"
                 value={imagePath}
                 onChange={(e) => setImagePath(e.target.value)}
                 placeholder="Click 'Pick Image' or paste a path the backend can read"
-                className="w-full px-3.5 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono"
                 required
+                className="field mono min-w-0 flex-1"
               />
-            </div>
-            <button
-              type="button"
-              onClick={handlePickImage}
-              disabled={sketch.isPending || isStaging}
-              className="px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium text-xs flex items-center justify-center gap-2 transition-colors shadow-md shadow-indigo-600/20 shrink-0"
-            >
-              {isStaging ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Upload className="w-4 h-4" />
-              )}
-              {isStaging ? "Uploading…" : "Pick Image"}
-            </button>
-          </div>
-
-          {/* What the backend will read, and who has to move the file */}
-          {imagePath && (
-            <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 text-xs text-zinc-400 space-y-1">
-              <div className="flex items-center gap-2 text-zinc-300 font-medium">
-                <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span>Backend Path ({mode}):</span>
-              </div>
-              <div className="font-mono text-[11px] text-zinc-400 pl-5 space-y-0.5">
-                <div>
-                  Selected: <span className="text-zinc-200">{imagePath}</span>
-                </div>
-                <div>
-                  Backend sees:{" "}
-                  <span className="text-indigo-300 font-semibold">
-                    {inputPlan.path || "—"}
-                  </span>
-                </div>
-                {inputPlan.needsUpload && (
-                  <div className="text-amber-400/90 text-[10px]">
-                    &bull; The file is uploaded to the backend when the run
-                    starts: the container only reads files it was given.
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Files this session put on the backend: the user decides whether they stay */}
-          {uploadedInputs.length > 0 && (
-            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
-              <span className="text-zinc-500">
-                {uploadedInputs.length} file(s) uploaded to the backend this
-                session.
-              </span>
               <button
                 type="button"
-                onClick={handleDeleteInputs}
-                disabled={sketch.isPending}
-                data-testid="single-delete-uploads"
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 border border-zinc-700 transition-colors"
+                onClick={handlePickImage}
+                disabled={sketch.isPending || isStaging}
+                className="btn shrink-0"
               >
-                <Trash2 className="w-3 h-3" />
-                Delete uploads
+                {isStaging ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 animate-spin"
+                  />
+                ) : (
+                  <Upload aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+                {isStaging ? "Uploading…" : "Pick Image"}
               </button>
             </div>
-          )}
-
-          {/* Where the produced video should go (default: beside the image) */}
-          <div className="pt-3 border-t border-zinc-800/80">
-            <OutputFolderField
-              id="single-output-dir"
-              value={outputDir}
-              onChange={setOutputDir}
-              plan={outputPlan}
-            />
           </div>
-        </div>
 
-        {/* Collapsible Advanced Configuration Form */}
-        <AdvancedConfigForm
-          config={config}
-          onChangeConfig={setConfig}
-          objectMaskPath={objectMaskPath}
-          onChangeObjectMaskPath={setObjectMaskPath}
-          handImagePath={handImagePath}
-          onChangeHandImagePath={setHandImagePath}
-          handMaskPath={handMaskPath}
-          onChangeHandMaskPath={setHandMaskPath}
-          onUploaded={trackUpload}
-          isBatchMode={false}
-        />
+          <OutputFolderField
+            id="single-output-dir"
+            value={outputDir}
+            onChange={setOutputDir}
+            plan={outputPlan}
+            input={{ path: imagePath, plan: inputPlan, mode }}
+          />
 
-        {/* Action Controls, Live Progress & Submit Button */}
-        <div className="space-y-3">
-          {sketch.isPending && (
-            <ProgressBar
-              testId="single-progress"
-              percent={progress?.percent ?? null}
-              label={progress?.label || "Preparing the sketch…"}
-              detail={frameDetail(progress)}
-            />
-          )}
+          <AdvancedConfigForm
+            config={config}
+            onChangeConfig={setConfig}
+            objectMaskPath={objectMaskPath}
+            onChangeObjectMaskPath={setObjectMaskPath}
+            handImagePath={handImagePath}
+            onChangeHandImagePath={setHandImagePath}
+            handMaskPath={handMaskPath}
+            onChangeHandMaskPath={setHandMaskPath}
+            onUploaded={trackUpload}
+            isBatchMode={false}
+          />
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="text-xs text-zinc-500">
+          <div className="mt-6 flex flex-col gap-3">
+            {result && (
+              <button
+                type="button"
+                onClick={() => sketch.reset()}
+                className="btn btn-quiet self-start"
+              >
+                Clear Result
+              </button>
+            )}
+
+            <button
+              type="submit"
+              disabled={!imagePath.trim() || sketch.isPending || !ready}
+              className="btn btn-primary w-full"
+            >
               {sketch.isPending ? (
-                <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
-                  <Clock className="w-4 h-4" />
+                <>
+                  <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                  Generating ({elapsedSec}s)...
+                </>
+              ) : (
+                <>
+                  <Play aria-hidden="true" className="h-4 w-4" />
+                  Generate Sketch Video
+                </>
+              )}
+            </button>
+
+            <p className="text-micro text-room-muted">
+              {sketch.isPending ? (
+                <span className="mono flex items-center gap-1.5">
+                  <Clock
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 text-onion"
+                  />
                   Synthesizing sketch frames... Elapsed: {elapsedSec}s
                 </span>
               ) : (
-                <span>Synchronous generation. May take several seconds.</span>
+                "Synchronous generation. May take several seconds."
               )}
-            </div>
+            </p>
 
-            <div className="flex items-center gap-3 w-full sm:w-auto">
-              {result && (
-                <button
-                  type="button"
-                  onClick={() => sketch.reset()}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-                >
-                  Clear Result
-                </button>
-              )}
-
-              <button
-                type="submit"
-                disabled={!imagePath.trim() || sketch.isPending || !ready}
-                className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
-              >
-                {sketch.isPending ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Generating ({elapsedSec}s)...
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-4 h-4 fill-white" />
-                    Generate Sketch Video
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      </form>
-
-      {/* Error Display Card (404 / 422 / 500 / unreachable) */}
-      {appError && (
-        <div
-          role="alert"
-          data-testid="single-error"
-          className="p-5 rounded-2xl bg-rose-500/10 border border-rose-500/20 space-y-3"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              <div>
-                <h4 className="text-sm font-bold text-rose-300">
-                  {appError.status
-                    ? `Request Error ${appError.status}`
-                    : "Backend Request Failed"}
-                </h4>
-                <p className="text-xs text-rose-200/90 mt-1 leading-relaxed">
-                  {appError.message}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setErrorDismissed(true)}
-              className="text-xs text-rose-400 hover:text-rose-200"
-            >
-              Dismiss
-            </button>
-          </div>
-
-          {/* Verbatim backend payload with copy button */}
-          {appError.verbatim && (
-            <div className="pt-2 border-t border-rose-500/20">
-              <div className="flex items-center justify-between text-[11px] text-rose-300/80 mb-1">
-                <span className="font-semibold font-mono">
-                  Verbatim backend error:
+            {uploadedInputs.length > 0 && (
+              <div className="row items-center">
+                <span className="text-micro text-room-muted">
+                  {uploadedInputs.length} file(s) uploaded to the backend this
+                  session.
                 </span>
                 <button
                   type="button"
-                  onClick={() => handleCopyVerbatimError(appError.verbatim!)}
-                  className="flex items-center gap-1 text-xs text-indigo-300 hover:text-white px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700"
+                  onClick={handleDeleteInputs}
+                  disabled={sketch.isPending}
+                  data-testid="single-delete-uploads"
+                  className="btn btn-quiet shrink-0"
                 >
-                  <Copy className="w-3 h-3" />
-                  {copiedError ? "Copied verbatim!" : "Copy error"}
+                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
+                  Delete uploads
                 </button>
               </div>
-              <pre className="p-3 rounded-lg bg-zinc-950 font-mono text-[11px] text-rose-200 overflow-x-auto select-all max-h-48 border border-zinc-900">
-                {appError.verbatim}
-              </pre>
+            )}
+          </div>
+        </form>
+      </section>
+
+      <section className="sheet flex min-h-0 flex-col">
+        <div className="pegbar">
+          <i />
+          <i />
+          <i />
+        </div>
+
+        <div className="flex min-h-0 flex-1 flex-col p-5">
+          <DrawingCanvas
+            className="aspect-video lg:aspect-auto lg:min-h-[200px] lg:flex-1"
+            percent={sketch.isPending ? (progress?.percent ?? null) : undefined}
+            frameSrc={
+              sketch.isPending && progress?.previewPath
+                ? artifactDownloadUrl(progress.previewPath, "inline")
+                : undefined
+            }
+            underlay={
+              sketch.isPending && sourceImageUrl ? (
+                <img
+                  src={sourceImageUrl}
+                  alt=""
+                  className="h-full w-full object-contain"
+                  onError={() => setFailedSourceUrl(sourceImageUrl)}
+                />
+              ) : undefined
+            }
+            media={
+              showsVideo ? (
+                <video
+                  data-testid="single-video"
+                  src={previewUrl}
+                  controls
+                  autoPlay
+                  className="h-full w-full object-contain"
+                  onError={() => {
+                    setVideoFailedToLoad(true);
+                  }}
+                >
+                  Your browser/webview does not support the video tag.
+                </video>
+              ) : showsSourceImage ? (
+                <img
+                  src={sourceImageUrl}
+                  alt="Selected source image"
+                  className="h-full w-full object-contain"
+                  onError={() => setFailedSourceUrl(sourceImageUrl)}
+                />
+              ) : undefined
+            }
+            empty={
+              resultDeleted ? (
+                <div className="space-y-1.5">
+                  <p className="text-value font-semibold text-graphite-2">
+                    Deleted from the backend
+                  </p>
+                  <p className="max-w-[44ch] text-micro text-graphite-3">
+                    The file is gone from the server. Run the sketch again if
+                    you need another copy.
+                  </p>
+                </div>
+              ) : videoFailedToLoad && !showsSourceImage && !sketch.isPending ? (
+                <div className="space-y-1.5">
+                  <Film
+                    aria-hidden="true"
+                    className="mx-auto h-5 w-5 text-graphite-3"
+                  />
+                  <p className="text-value font-semibold text-graphite-2">
+                    The video could not be played here
+                  </p>
+                  <p className="max-w-[44ch] text-micro text-graphite-3">
+                    The file exists on the backend. Use Download MP4 to save it.
+                  </p>
+                </div>
+              ) : !result && !showsSourceImage && !sketch.isPending ? (
+                <p className="max-w-[40ch] text-micro text-graphite-3">
+                  Pick a source image, then generate the sketch — the render
+                  lands here.
+                </p>
+              ) : undefined
+            }
+          />
+
+          {videoFailedToLoad && showsSourceImage && (
+            <div className="mt-3 flex items-start gap-2.5 border-t border-sheet-line pt-3">
+              <Film
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-graphite-3"
+              />
+              <div>
+                <p className="text-value font-semibold text-graphite-2">
+                  The video could not be played here
+                </p>
+                <p className="mt-1 text-micro text-graphite-3">
+                  The file exists on the backend. Use Download MP4 to save it.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {sketch.isPending && (
+            <div className="mt-4">
+              <ProgressBar
+                testId="single-progress"
+                percent={progress?.percent ?? null}
+                label={progress?.label || "Preparing the sketch…"}
+                detail={frameDetail(progress)}
+              />
+            </div>
+          )}
+
+          {appError && (
+            <div
+              role="alert"
+              data-testid="single-error"
+              className="mt-4 border-t border-sheet-line pt-4"
+            >
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0 text-alert-ink"
+                  />
+                  <div>
+                    <h4 className="text-value font-semibold text-alert-ink">
+                      {appError.status
+                        ? `Request Error ${appError.status}`
+                        : "Backend Request Failed"}
+                    </h4>
+                    <p className="mt-1 text-micro text-graphite-2">
+                      {appError.message}
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setErrorDismissed(true)}
+                  className="sheet-btn shrink-0"
+                >
+                  Dismiss
+                </button>
+              </div>
+
+              {appError.verbatim && (
+                <div className="mt-3 border-t border-sheet-line pt-3">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <span className="sheet-label">Verbatim backend error:</span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyVerbatimError(appError.verbatim!)}
+                      className="sheet-btn"
+                    >
+                      <Copy aria-hidden="true" className="h-3 w-3" />
+                      {copiedError ? "Copied verbatim!" : "Copy error"}
+                    </button>
+                  </div>
+                  <pre className="mono max-h-48 overflow-x-auto rounded-sheet border border-sheet-line bg-sheet-raised p-3 text-micro text-graphite-2 select-all">
+                    {appError.verbatim}
+                  </pre>
+                </div>
+              )}
             </div>
           )}
         </div>
-      )}
 
-      {/* Generation Result & Video Preview Section */}
-      {result && (
-        <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl space-y-5 animate-fade-in">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-              <CheckCircle2 className="w-5 h-5" />
-              Sketch Video Generated Successfully
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0">
+        {result && (
+          <div className="fade-in mt-auto border-t border-sheet-line p-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="sheet-label shrink-0">
+                {mode === "sidecar"
+                  ? "Output File (host):"
+                  : "File on the Backend:"}
+              </span>
+              <span
+                data-testid="single-output-path"
+                className="mono min-w-0 flex-1 truncate text-micro text-graphite-2"
+              >
+                {result.output_path}
+              </span>
+              <button
+                type="button"
+                onClick={() => handleCopyPath(result.output_path)}
+                className="sheet-btn shrink-0"
+              >
+                <Copy aria-hidden="true" className="h-3 w-3" />
+                {copiedPath ? "Copied!" : "Copy path"}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={isDownloading || resultDeleted}
+                data-testid="single-download"
+                className="sheet-btn sheet-btn-solid shrink-0"
+              >
+                {isDownloading ? (
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 animate-spin"
+                  />
+                ) : (
+                  <Download aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+                {isDownloading ? "Preparing…" : "Download MP4"}
+              </button>
               <button
                 type="button"
                 onClick={handleDelete}
                 disabled={isDeleting || resultDeleted}
                 data-testid="single-delete"
                 title="Delete the file from the backend"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 text-xs font-medium border border-zinc-700 transition-colors"
+                className="sheet-btn shrink-0"
               >
                 {isDeleting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 animate-spin"
+                  />
                 ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5" />
                 )}
                 {isDeleting ? "Deleting…" : "Delete"}
               </button>
-
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={isDownloading || resultDeleted}
-                data-testid="single-download"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
-              >
-                {isDownloading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Download className="w-3.5 h-3.5" />
-                )}
-                {isDownloading ? "Preparing…" : "Download MP4"}
-              </button>
-            </div>
-          </div>
-
-          {/* Video Player or Fallback */}
-          <div className="relative aspect-video max-w-2xl mx-auto rounded-xl overflow-hidden bg-black border border-zinc-800 flex items-center justify-center">
-            {resultDeleted ? (
-              <div className="p-6 text-center space-y-2">
-                <Trash2 className="w-12 h-12 text-zinc-600 mx-auto" />
-                <p className="text-sm font-semibold text-zinc-300">
-                  Deleted from the backend
-                </p>
-                <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                  The file is gone from the server. Run the sketch again if you
-                  need another copy.
-                </p>
-              </div>
-            ) : videoFailedToLoad ? (
-              <div className="p-6 text-center space-y-3">
-                <Film className="w-12 h-12 text-zinc-600 mx-auto" />
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-zinc-300">
-                    The video could not be played here
-                  </p>
-                  <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                    The file exists on the backend. Use Download MP4 to save it.
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <video
-                data-testid="single-video"
-                src={previewUrl}
-                controls
-                autoPlay
-                className="w-full h-full object-contain"
-                onError={() => {
-                  setVideoFailedToLoad(true);
-                }}
-              >
-                Your browser/webview does not support the video tag.
-              </video>
-            )}
-          </div>
-
-          {/* Backend File Path & Download Actions */}
-          <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
-            <div className="flex items-center justify-between text-xs text-zinc-400">
-              <span className="font-semibold text-zinc-300">
-                {mode === "sidecar"
-                  ? "Output File (host):"
-                  : "File on the Backend:"}
-              </span>
-              <button
-                type="button"
-                onClick={() => handleCopyPath(result.output_path)}
-                className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
-              >
-                <Copy className="w-3.5 h-3.5" />
-                {copiedPath ? "Copied!" : "Copy path"}
-              </button>
-            </div>
-            <div
-              data-testid="single-output-path"
-              className="p-2.5 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-200 break-all select-all"
-            >
-              {result.output_path}
             </div>
 
-            <div className="text-[11px] text-zinc-500">
+            <p className="mt-2 text-micro text-graphite-3">
               {mode === "sidecar"
                 ? "Written directly by the native backend, at the path above."
                 : "Kept inside the backend until you download it. Deleting it here does not touch a copy you already saved, and the container's scratch space is cleared on restart anyway."}
-            </div>
+            </p>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+    </section>
+  </div>
   );
 };

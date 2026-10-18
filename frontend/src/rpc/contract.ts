@@ -112,6 +112,7 @@ export const EventDataSchema = z.discriminatedUnion("event", [
     label: z.string().optional(),
     frame: z.number().int().optional(),
     total_frames: z.number().int().optional(),
+    preview_path: z.string().optional(),
   }),
   z.object({
     event: z.literal("sketch.completed"),
@@ -138,6 +139,7 @@ export const EventDataSchema = z.discriminatedUnion("event", [
     item_index: z.number().int().optional(),
     item_total: z.number().int().optional(),
     item_name: z.string().optional(),
+    preview_path: z.string().optional(),
   }),
   z.object({
     event: z.literal("batch.completed"),

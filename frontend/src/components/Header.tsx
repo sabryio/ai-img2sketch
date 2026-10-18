@@ -1,14 +1,5 @@
 import React from "react";
-import {
-  Box,
-  Layers,
-  Radio,
-  RefreshCw,
-  Server,
-  Settings,
-  Sparkles,
-  Zap,
-} from "lucide-react";
+import { Box, Layers, PenLine, Radio, RefreshCw, Server, Settings } from "lucide-react";
 import { useHealth } from "../hooks";
 import type { SseState } from "../hooks";
 import { useBackendStore } from "../stores/backend";
@@ -22,6 +13,18 @@ interface HeaderProps {
   /** Reconnect the live event stream (clicking the SSE badge). */
   onRestartStream: () => void;
 }
+
+/** The registration bar, reduced to a mark: a sheet with three pegs. */
+const SheetMark: React.FC = () => (
+  <span
+    aria-hidden="true"
+    className="flex h-5.5 w-5.5 items-center justify-center gap-0.5 rounded-sheet bg-sheet"
+  >
+    <i className="block h-1.75 w-0.75 rounded-xs bg-graphite" />
+    <i className="block h-1.75 w-0.75 rounded-xs bg-graphite" />
+    <i className="block h-1.75 w-0.75 rounded-xs bg-graphite" />
+  </span>
+);
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
@@ -41,209 +44,135 @@ export const Header: React.FC<HeaderProps> = ({
       ? "starting"
       : "down";
 
-  const getSseBadge = () => {
-    switch (sseState) {
-      case "online":
-        return (
-          <span
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-            title="SSE stream connected: listening for lifecycle events"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-            SSE Live
-          </span>
-        );
-      case "reconnecting":
-        return (
-          <span
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"
-            title="SSE stream reconnecting..."
-          >
-            <RefreshCw className="w-3 h-3 animate-spin" />
-            Reconnecting
-          </span>
-        );
-      case "connecting":
-        return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20">
-            <Radio className="w-3 h-3 animate-pulse" />
-            Connecting
-          </span>
-        );
-      case "closed":
-      default:
-        return (
-          <span
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-800 text-zinc-400 border border-zinc-700"
-            title="SSE stream idle or closed"
-          >
-            <span className="w-1.5 h-1.5 rounded-full bg-zinc-500"></span>
-            SSE Idle
-          </span>
-        );
-    }
-  };
+  const healthTone = ready
+    ? "var(--color-committed-soft)"
+    : health.status === "pending"
+      ? "var(--color-held-soft)"
+      : "var(--color-alert-soft)";
+
+  const sseTone =
+    sseState === "online"
+      ? "var(--color-committed-soft)"
+      : sseState === "reconnecting"
+        ? "var(--color-held-soft)"
+        : sseState === "connecting"
+          ? "var(--color-onion)"
+          : "var(--color-room-faint)";
+
+  const sseTitle =
+    sseState === "online"
+      ? "SSE stream connected: listening for lifecycle events"
+      : sseState === "reconnecting"
+        ? "SSE stream reconnecting..."
+        : sseState === "connecting"
+          ? "SSE stream connecting..."
+          : "SSE stream idle or closed";
 
   return (
-    <header className="sticky top-0 z-30 bg-zinc-950/80 backdrop-blur-md border-b border-zinc-800">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          {/* Logo & Brand */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                <Sparkles className="w-5 h-5 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-bold text-white tracking-tight">
-                    AI-Img2Sketch
-                  </h1>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60">
-                    Tauri
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-400 hidden sm:block">
-                  FastAPI Engine &bull; Video Sketch Synthesis
-                </p>
-              </div>
-            </div>
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-6 border-b border-room-line bg-room px-4 sm:px-6">
+      <div className="flex items-center gap-2.5">
+        <SheetMark />
+        <span className="text-[15px] font-semibold tracking-[-0.01em] text-room-text">
+          AI-Img2Sketch
+        </span>
+      </div>
 
-            {/* Navigation Tabs */}
-            <div className="hidden md:flex items-center p-1 rounded-lg bg-zinc-900 border border-zinc-800/80 ml-4">
-              <button
-                type="button"
-                onClick={() => onTabChange("single")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  activeTab === "single"
-                    ? "bg-indigo-600 text-white shadow"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                Single Image
-              </button>
-              <button
-                type="button"
-                onClick={() => onTabChange("batch")}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  activeTab === "batch"
-                    ? "bg-indigo-600 text-white shadow"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                Batch Processing
-              </button>
-            </div>
-          </div>
+      {/* Navigation reads as navigation: one segmented control, the platform's control. */}
+      <nav aria-label="Job" className="seg">
+        <button
+          type="button"
+          onClick={() => onTabChange("single")}
+          aria-current={activeTab === "single" ? "page" : undefined}
+        >
+          <PenLine aria-hidden="true" className="h-3.5 w-3.5" />
+          Single Image
+        </button>
+        <button
+          type="button"
+          onClick={() => onTabChange("batch")}
+          aria-current={activeTab === "batch" ? "page" : undefined}
+        >
+          <Layers aria-hidden="true" className="h-3.5 w-3.5" />
+          Batch Processing
+        </button>
+      </nav>
 
-          {/* Right Controls: Status Badges, Mode Toggle, Settings */}
-          <div className="flex items-center gap-3">
-            {/* Backend Health Badge */}
-            <button
-              type="button"
-              data-testid="health-badge"
-              onClick={() => health.refetch()}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                ready
-                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20"
-                  : health.status === "pending"
-                    ? "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                    : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-              }`}
-              title="Click to re-check backend health"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  ready ? "bg-emerald-400" : "bg-rose-400"
-                }`}
-              />
-              <span className="hidden sm:inline">Backend:</span>
-              <span className="font-semibold capitalize">{healthLabel}</span>
-            </button>
+      <div className="ml-auto flex items-center gap-2.5">
+        {/* Backend health: a status reading, not a decoration — click re-checks it. */}
+        <button
+          type="button"
+          data-testid="health-badge"
+          onClick={() => health.refetch()}
+          title="Click to re-check backend health"
+          className="inline-flex items-center gap-1.5 rounded-sheet px-2 py-1 text-micro text-room-muted transition-colors hover:bg-room-raised hover:text-room-text"
+        >
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ backgroundColor: healthTone }}
+          />
+          <span className="hidden sm:inline">Backend:</span>
+          <span className="tnum">{healthLabel}</span>
+        </button>
 
-            {/* SSE Badge: click to reconnect the live event stream */}
-            <button
-              type="button"
-              data-testid="sse-badge"
-              onClick={onRestartStream}
-              title="Live event stream (GET /api/v1/events) — click to reconnect"
-              className="rounded-full focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
-            >
-              {getSseBadge()}
-            </button>
+        {/* SSE: click to reconnect the live event stream. */}
+        <button
+          type="button"
+          data-testid="sse-badge"
+          onClick={onRestartStream}
+          title={sseTitle}
+          className="inline-flex items-center gap-1.5 rounded-sheet px-2 py-1 text-micro text-room-muted transition-colors hover:bg-room-raised hover:text-room-text"
+        >
+          {sseState === "reconnecting" ? (
+            <RefreshCw aria-hidden="true" className="h-3 w-3 animate-spin" />
+          ) : sseState === "connecting" ? (
+            <Radio aria-hidden="true" className="h-3 w-3" />
+          ) : (
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: sseTone }}
+            />
+          )}
+          {sseState === "online"
+            ? "SSE Live"
+            : sseState === "reconnecting"
+              ? "Reconnecting"
+              : sseState === "connecting"
+                ? "Connecting"
+                : "SSE Idle"}
+        </button>
 
-            {/* Mode Switcher */}
-            <div className="hidden lg:flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setMode("docker")}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition-colors ${
-                  mode === "docker"
-                    ? "bg-zinc-800 text-indigo-400 font-semibold"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-                title="Docker container execution (port 8000 + mounted volumes)"
-              >
-                <Box className="w-3.5 h-3.5" />
-                Docker
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("sidecar")}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md transition-colors ${
-                  mode === "sidecar"
-                    ? "bg-zinc-800 text-indigo-400 font-semibold"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-                title="Direct native host sidecar execution (img2sketch-api binary)"
-              >
-                <Server className="w-3.5 h-3.5" />
-                Sidecar
-              </button>
-            </div>
-
-            {/* Settings Button */}
-            <button
-              type="button"
-              onClick={onOpenSettings}
-              className="p-2 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors border border-transparent hover:border-zinc-700"
-              title="Configure API Base URL, Docker paths, and debug logs"
-              aria-label="Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Navigation Tabs */}
-        <div className="flex md:hidden items-center justify-around pb-3 pt-1 border-t border-zinc-800/60">
+        <div className="seg" role="group" aria-label="Execution mode">
           <button
             type="button"
-            onClick={() => onTabChange("single")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium ${
-              activeTab === "single"
-                ? "bg-indigo-600 text-white"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
+            aria-pressed={mode === "docker"}
+            onClick={() => setMode("docker")}
+            title="Docker container execution (port 8000)"
           >
-            <Zap className="w-3.5 h-3.5" />
-            Single
+            <Box aria-hidden="true" className="h-3.5 w-3.5" />
+            Docker
           </button>
           <button
             type="button"
-            onClick={() => onTabChange("batch")}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium ${
-              activeTab === "batch"
-                ? "bg-indigo-600 text-white"
-                : "text-zinc-400 hover:text-zinc-200"
-            }`}
+            aria-pressed={mode === "sidecar"}
+            onClick={() => setMode("sidecar")}
+            title="Direct native host sidecar execution (img2sketch-api binary)"
           >
-            <Layers className="w-3.5 h-3.5" />
-            Batch
+            <Server aria-hidden="true" className="h-3.5 w-3.5" />
+            Sidecar
           </button>
         </div>
+
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="btn btn-quiet px-2"
+          title="Configure API base URL, execution mode, and the event log"
+          aria-label="Settings"
+        >
+          <Settings aria-hidden="true" className="h-4 w-4" />
+        </button>
       </div>
     </header>
   );

@@ -1,6 +1,6 @@
 import React from "react";
-import { Folder, X } from "lucide-react";
-import type { OutputPlan } from "../lib/paths";
+import { Folder, Info, X } from "lucide-react";
+import type { BackendMode, InputPathPlan, OutputPlan } from "../lib/paths";
 
 interface OutputFolderFieldProps {
   /** Unique per view (`single-output-dir`, `batch-output-dir`). */
@@ -12,6 +12,17 @@ interface OutputFolderFieldProps {
    * asks for can never disagree.
    */
   plan: OutputPlan;
+  /**
+   * The single file the run reads, as selected and as the backend will open it.
+   * Views that have no single input of their own omit it.
+   */
+  input?: {
+    /** Path as selected or typed by the user. */
+    path: string;
+    /** Path the backend will open, and whether bytes have to travel first. */
+    plan: InputPathPlan;
+    mode: BackendMode;
+  };
 }
 
 /** Sentence explaining where the videos will actually land. */
@@ -29,7 +40,7 @@ function describePlan(plan: OutputPlan, value: string): React.ReactNode {
 
   if (plan.note === "exported") {
     return (
-      <span className="text-amber-400/90">
+      <span className="text-held-soft">
         The container cannot write to {typed}: it renders next to the image, and
         the desktop app copies each video there when it finishes.
       </span>
@@ -38,7 +49,7 @@ function describePlan(plan: OutputPlan, value: string): React.ReactNode {
 
   if (plan.note === "download") {
     return (
-      <span className="text-amber-400/90">
+      <span className="text-held-soft">
         The container cannot write to {typed}. Videos are rendered next to the
         image — use Download to save them there.
       </span>
@@ -49,11 +60,11 @@ function describePlan(plan: OutputPlan, value: string): React.ReactNode {
   return (
     <>
       Backend writes to{" "}
-      <code className="font-mono text-indigo-300">{mapped}</code>
+      <code className="mono text-onion">{mapped}</code>
       {mapped !== typed && (
         <>
           {" "}
-          (mapped from <code className="font-mono text-zinc-400">{typed}</code>)
+          (mapped from <code className="mono text-room-muted">{typed}</code>)
         </>
       )}
       .
@@ -73,41 +84,79 @@ export const OutputFolderField: React.FC<OutputFolderFieldProps> = ({
   value,
   onChange,
   plan,
+  input,
 }) => (
-  <div className="space-y-1.5">
-    <label
-      htmlFor={id}
-      className="flex items-center gap-2 text-sm font-semibold text-zinc-200"
-    >
-      <Folder className="w-4 h-4 text-indigo-400" />
-      Output Folder
-      <span className="text-[11px] font-normal text-zinc-500">optional</span>
-    </label>
+  <>
+    {input && input.path.trim() && (
+      <div className="row flex-col items-stretch">
+        <div className="flex items-center gap-2">
+          <Info aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-onion" />
+          <span className="text-micro font-medium text-room-text">
+            Backend Path ({input.mode}):
+          </span>
+        </div>
 
-    <div className="flex flex-col sm:flex-row gap-2.5">
-      <input
-        id={id}
-        type="text"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="Leave empty to save next to the selected image"
-        className="flex-1 px-3.5 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono"
-      />
-      {value && (
-        <button
-          type="button"
-          onClick={() => onChange("")}
-          className="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-xs flex items-center justify-center gap-1.5 transition-colors border border-zinc-700 shrink-0"
-          title="Clear: write beside the image again"
+        <div className="mono mt-2 space-y-1 text-micro">
+          <div className="flex items-baseline gap-1.5">
+            <span className="shrink-0 text-room-faint">Selected:</span>
+            <span className="min-w-0 truncate text-room-text">
+              {input.path}
+            </span>
+          </div>
+          <div className="flex items-baseline gap-1.5">
+            <span className="shrink-0 text-room-faint">Backend sees:</span>
+            <span className="min-w-0 truncate font-semibold text-onion">
+              {input.plan.path || "—"}
+            </span>
+          </div>
+        </div>
+
+        {input.plan.needsUpload && (
+          <p className="mt-2 text-micro text-held-soft">
+            &bull; The file is uploaded to the backend when the run starts: the
+            container only reads files it was given.
+          </p>
+        )}
+      </div>
+    )}
+
+    <div className="row flex-col items-stretch">
+      <div className="flex items-baseline justify-between gap-3">
+        <label
+          htmlFor={id}
+          className="label flex items-center gap-1.5"
         >
-          <X className="w-3.5 h-3.5" />
-          Clear
-        </button>
-      )}
-    </div>
+          <Folder aria-hidden="true" className="h-3.5 w-3.5 text-onion" />
+          Output Folder
+        </label>
+        <span className="text-micro text-room-faint">optional</span>
+      </div>
 
-    <p className="text-[11px] text-zinc-500" data-testid="output-plan">
-      {describePlan(plan, value)}
-    </p>
-  </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input
+          id={id}
+          type="text"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder="Leave empty to save next to the selected image"
+          className="field mono min-w-0 flex-1"
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange("")}
+            className="btn btn-quiet shrink-0"
+            title="Clear: write beside the image again"
+          >
+            <X aria-hidden="true" className="h-3.5 w-3.5" />
+            Clear
+          </button>
+        )}
+      </div>
+
+      <p className="mt-2 text-micro text-room-muted" data-testid="output-plan">
+        {describePlan(plan, value)}
+      </p>
+    </div>
+  </>
 );

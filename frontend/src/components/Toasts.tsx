@@ -1,12 +1,5 @@
 import React, { useState } from "react";
-import {
-  AlertCircle,
-  AlertTriangle,
-  CheckCircle2,
-  Copy,
-  Info,
-  X,
-} from "lucide-react";
+import { Copy, X } from "lucide-react";
 import { useNotificationsStore } from "../stores/notifications";
 
 export const Toasts: React.FC = () => {
@@ -25,74 +18,83 @@ export const Toasts: React.FC = () => {
   return (
     <aside
       aria-label="Notifications"
-      className="fixed bottom-4 right-4 z-50 flex flex-col gap-2.5 max-w-md w-full pointer-events-none px-4 sm:px-0"
+      className="pointer-events-none fixed bottom-4 right-4 z-50 flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col gap-2.5 overflow-y-auto px-4 sm:px-0"
     >
       {toasts.map((toast) => {
         const isError = toast.type === "error";
         const isSuccess = toast.type === "success";
         const isWarning = toast.type === "warning";
 
+        const stateTag = isError
+          ? "tag-alert"
+          : isSuccess
+            ? "tag-committed"
+            : isWarning
+              ? "tag-held"
+              : "tag-pencil";
+        const stateDot = isError
+          ? "bg-alert-soft"
+          : isSuccess
+            ? "bg-committed-soft"
+            : isWarning
+              ? "bg-held-soft"
+              : "bg-onion";
+        const stateLabel = isError
+          ? "Error"
+          : isSuccess
+            ? "Done"
+            : isWarning
+              ? "Warning"
+              : "Info";
+
         return (
           <div
             key={toast.id}
             role="status"
-            className={`pointer-events-auto p-4 rounded-xl border shadow-2xl backdrop-blur-md transition-all animate-slide-up ${
-              isError
-                ? "bg-zinc-950/95 border-rose-500/40 text-rose-200"
-                : isSuccess
-                  ? "bg-zinc-950/95 border-emerald-500/30 text-emerald-200"
-                  : isWarning
-                    ? "bg-zinc-950/95 border-amber-500/30 text-amber-200"
-                    : "bg-zinc-950/95 border-zinc-800 text-zinc-200"
-            }`}
+            className="region slip-in pointer-events-auto p-3.5"
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-start gap-2.5">
-                {isError && (
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
-                )}
-                {isSuccess && (
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                )}
-                {isWarning && (
-                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                )}
-                {!isError && !isSuccess && !isWarning && (
-                  <Info className="w-4 h-4 text-indigo-400 shrink-0 mt-0.5" />
-                )}
+            <div className="flex items-start gap-3">
+              <span
+                aria-hidden="true"
+                className={`mt-1.75 h-1.5 w-1.5 shrink-0 rounded-full ${stateDot}`}
+              />
 
-                <div className="space-y-0.5">
-                  <h4 className="text-xs font-bold text-white tracking-tight">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <h4 className="text-value font-semibold tracking-[-0.01em] text-room-text">
                     {toast.title}
                   </h4>
-                  <p className="text-xs leading-relaxed opacity-90 break-words">
-                    {toast.message}
-                  </p>
+                  <span className={`tag shrink-0 ${stateTag}`}>
+                    {stateLabel}
+                  </span>
                 </div>
+                <p className="mt-1 text-micro leading-relaxed wrap-break-word text-room-muted">
+                  {toast.message}
+                </p>
               </div>
 
               <button
                 type="button"
                 onClick={() => dismissToast(toast.id)}
-                className="text-zinc-400 hover:text-white p-1 rounded transition-colors"
+                className="btn btn-quiet shrink-0 px-1.5 py-1"
                 aria-label="Close notification"
               >
-                <X className="w-3.5 h-3.5" />
+                <X aria-hidden="true" className="h-3.5 w-3.5" />
               </button>
             </div>
 
             {/* Verbatim 500 error display with copy button */}
             {toast.verbatim && (
-              <div className="mt-3 pt-2 border-t border-zinc-800/80 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-mono text-zinc-400 truncate">
+              <div className="hairline mt-3 flex items-center justify-between gap-2 pt-2.5">
+                <span className="mono truncate text-[11px] text-room-faint">
                   Local debugging payload
                 </span>
                 <button
                   type="button"
                   onClick={() => handleCopy(toast.id, toast.verbatim!)}
-                  className="inline-flex items-center gap-1 px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-medium transition-colors border border-zinc-700"
+                  className="btn shrink-0 px-2 py-1 text-[11px]"
                 >
-                  <Copy className="w-3 h-3" />
+                  <Copy aria-hidden="true" className="h-3 w-3" />
                   {copiedId === toast.id
                     ? "Copied verbatim"
                     : "Copy verbatim error"}
