@@ -385,7 +385,7 @@ ai-img2sketch/
 │   │   │   ├── object_mask_loader.py  # JsonObjectMaskLoader
 │   │   │   └── preprocessor.py   # OpenCVImagePreprocessor
 │   │   └── video/
-│   │       └── video_writer.py           # OpenCVVideoWriter
+│   │       └── video_writer.py           # PyAVVideoWriter
 │   │   ├── events/
 │   │   │   ├── async_event_bus.py        # In-process pub/sub backing SSE
 │   │   │   └── progress_reporter.py      # EventProgressReporter: render thread -> event loop

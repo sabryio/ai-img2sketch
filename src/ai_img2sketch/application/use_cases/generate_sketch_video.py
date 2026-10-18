@@ -182,10 +182,16 @@ class GenerateSketchVideoUseCase:
 
         writer = self._video_writer_factory(video)
         try:
-            progress = self._draw_entire_image(
+            progress, drawn_frames = self._draw_entire_image(
                 writer, preprocessed, hand, config, object_masks, progress_reporter, previews
             )
-            self._add_final_frames(writer, preprocessed, config, progress)
+            # A video holds at least one frame. When every group is smaller than
+            # its skip rate and no final frames were asked for, the drawing above
+            # wrote nothing, and a run that reports success with no file in it is
+            # not a result.
+            self._add_final_frames(
+                writer, preprocessed, config, progress, at_least_one=drawn_frames == 0
+            )
         finally:
             writer.release()
 
@@ -219,11 +225,12 @@ class GenerateSketchVideoUseCase:
         object_masks: list[ObjectMask],
         reporter: ProgressReporter | None = None,
         previews: FramePreviewPublisher | None = None,
-    ) -> _DrawProgress | None:
+    ) -> tuple[_DrawProgress | None, int]:
         """Draw the image progressively, group by group (object by object).
 
         Returns the frame counter handed to the final-frames phase, so the run
-        reports one continuous percentage; ``None`` when nobody is listening.
+        reports one continuous percentage, and how many frames the drawing
+        actually wrote; the counter is ``None`` when nobody is listening.
         """
         self._logger.info("Drawing entire image...")
 
@@ -242,7 +249,7 @@ class GenerateSketchVideoUseCase:
         if len(black_cells) == 0:
             self._logger.warning("No black pixels found to draw")
             # Only the final frames remain, and they are counted as a whole.
-            return _start_progress(reporter, 0, config, previews)
+            return _start_progress(reporter, 0, config, previews), 0
 
         self._logger.info("Found %d grid cells to draw", len(black_cells))
 
@@ -263,6 +270,7 @@ class GenerateSketchVideoUseCase:
             config,
             previews,
         )
+        drawn_frames = 0
 
         for group in groups:
             if len(group.cells) == 0:
@@ -273,7 +281,7 @@ class GenerateSketchVideoUseCase:
                 len(group.cells),
                 group.skip_rate,
             )
-            self._draw_group(
+            drawn_frames += self._draw_group(
                 writer,
                 drawn_frame,
                 hand,
@@ -284,7 +292,7 @@ class GenerateSketchVideoUseCase:
                 progress,
             )
 
-        return progress
+        return progress, drawn_frames
 
     def _resolve_skip_rate(
         self,
@@ -336,11 +344,16 @@ class GenerateSketchVideoUseCase:
         group: DrawingGroup,
         split_len: int,
         progress: _DrawProgress | None = None,
-    ) -> None:
-        """Draw every cell of one group following a nearest-neighbour path."""
+    ) -> int:
+        """Draw every cell of one group following a nearest-neighbour path.
+
+        Returns how many frames were written; a group smaller than its skip rate
+        writes none, which the caller has to allow for.
+        """
         cells = group.cells.copy()
         selected_idx = 0
         frame_counter = 0
+        drawn_frames = 0
 
         while len(cells) > 0:
             current_cell = cells[selected_idx].copy()
@@ -361,6 +374,7 @@ class GenerateSketchVideoUseCase:
             frame_counter += 1
             if frame_counter % group.skip_rate == 0:
                 writer.write_frame(frame_with_hand)
+                drawn_frames += 1
                 if progress is not None:
                     progress.frame_written(group.label, frame_with_hand)
 
@@ -369,6 +383,8 @@ class GenerateSketchVideoUseCase:
 
             if len(cells) > 0:
                 selected_idx = self._path_calculator.find_nearest_index(cells, current_cell)
+
+        return drawn_frames
 
     @staticmethod
     def _render_cell(
@@ -393,9 +409,19 @@ class GenerateSketchVideoUseCase:
         preprocessed: PreprocessedImage,
         config: VideoConfig,
         progress: _DrawProgress | None = None,
+        *,
+        at_least_one: bool = False,
     ) -> None:
-        """Add final frames showing the original image."""
+        """Add final frames showing the original image.
+
+        ``at_least_one`` is the video's only hard guarantee — a file has to hold
+        a frame — and it is needed when the drawing wrote none: an image whose
+        cells are all skipped by the rate, or one with no black pixels at all,
+        still has to come out as something the user can open.
+        """
         num_frames = _final_frame_count(config)
+        if at_least_one and num_frames == 0:
+            num_frames = 1
         self._logger.info("Adding %d final frames...", num_frames)
         for _ in range(num_frames):
             writer.write_frame(preprocessed.original)

@@ -106,8 +106,10 @@ or the filesystem lives here.
 - **OpenCVImagePreprocessor** implements `ImagePreprocessor`
 - **FileSystemImageScanner** implements `ImageDirectoryScanner`
 - **JsonObjectMaskLoader** implements `ObjectMaskLoader`
-- **OpenCVVideoWriter** implements `VideoWriter`; `create_opencv_video_writer`
-  implements `VideoWriterFactory`
+- **PyAVVideoWriter** implements `VideoWriter`; `create_pyav_video_writer`
+  implements `VideoWriterFactory`. Frames are encoded as H.264 so the file plays
+  in the app itself (and everywhere else); OpenCV's bundled FFmpeg has no H.264
+  encoder, and its only MP4 option (`mp4v`) is a codec browsers cannot decode
 - **AsyncEventBus** (in `events/`) implements `EventPublisher` (write side) and
   `EventStream` (read side) — the in-process bus backing the SSE transport
 - **MediaStore** (in `storage/`) implements `BlobStore` — sanitizes an upload's

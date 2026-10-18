@@ -174,7 +174,22 @@ def test_execute_handles_image_without_black_pixels(tmp_path: Path) -> None:
     use_case.execute(white, config, output_path=tmp_path / "out.mp4")
 
     assert factory.writer.released
-    assert factory.writer.frames == []
+    # Nothing to draw and no final frames asked for, but a video holds at least
+    # one frame: the finished image, so the run cannot hand back an empty file.
+    assert len(factory.writer.frames) == 1
+    assert factory.writer.frames[0].shape == (4, 4, 3)
+
+
+def test_execute_writes_a_frame_when_every_cell_is_skipped(tmp_path: Path) -> None:
+    factory = FakeVideoWriterFactory()
+    use_case = _build_use_case(tmp_path, factory)
+
+    # A skip rate above the cell count draws nothing, and no final frames were
+    # asked for: without the floor the video would be empty.
+    config = VideoConfig(frame_rate=1, split_len=2, object_skip_rate=100, end_duration_sec=0)
+    use_case.execute(_make_image_with_black_cells(), config, output_path=tmp_path / "out.mp4")
+
+    assert len(factory.writer.frames) == 1
 
 
 def test_object_masks_draw_in_document_order(tmp_path: Path) -> None:

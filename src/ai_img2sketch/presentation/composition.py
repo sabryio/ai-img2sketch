@@ -14,7 +14,7 @@ from ..infrastructure.image_processing.image_loader import OpenCVImageLoader
 from ..infrastructure.image_processing.image_scanner import FileSystemImageScanner
 from ..infrastructure.image_processing.object_mask_loader import JsonObjectMaskLoader
 from ..infrastructure.image_processing.preprocessor import OpenCVImagePreprocessor
-from ..infrastructure.video.video_writer import create_opencv_video_writer
+from ..infrastructure.video.video_writer import create_pyav_video_writer
 
 
 def create_image_loader() -> ImageLoader:
@@ -34,7 +34,7 @@ def build_generate_sketch_video_use_case(
         hand_loader=OpenCVHandLoader(),
         preprocessor=OpenCVImagePreprocessor(),
         object_mask_loader=JsonObjectMaskLoader(),
-        video_writer_factory=create_opencv_video_writer,
+        video_writer_factory=create_pyav_video_writer,
     )
 
 
