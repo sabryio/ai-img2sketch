@@ -179,3 +179,8 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Design flow working files (the product brief and the machine-readable design
+# record are tracked; the rest of the flow is scratch)
+.impeccable/*
+!.impeccable/design.json
