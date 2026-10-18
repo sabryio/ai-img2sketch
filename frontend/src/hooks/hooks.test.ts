@@ -3,6 +3,7 @@ import type { EventData } from "../rpc/contract";
 import { toSseState, useEventStream } from "./useEventStream";
 import { useGenerateSketch } from "./useGenerateSketch";
 import { useHealth } from "./useHealth";
+import { useLatestEvent } from "./useLatestEvent";
 
 /**
  * Type-level tests: nothing here renders a hook (no React renderer needed) —
@@ -13,7 +14,17 @@ import { useHealth } from "./useHealth";
  * compiling perfectly.
  */
 
-it("useEventStream data is the accumulated event array, not a single event", () => {
+it("useLatestEvent data is one event, not an array of them", () => {
+  type Result = ReturnType<typeof useLatestEvent>;
+
+  expectTypeOf<Result["data"]>().toEqualTypeOf<EventData | undefined>();
+  // The destructuring callers use: `const { data: latest, isLoading, error, refetch }`.
+  expectTypeOf<Result>().toHaveProperty("isLoading");
+  expectTypeOf<Result>().toHaveProperty("error");
+  expectTypeOf<Result>().toHaveProperty("refetch");
+});
+
+it("useEventStream data is the accumulated event array", () => {
   expectTypeOf<ReturnType<typeof useEventStream>["data"]>().toEqualTypeOf<
     EventData[] | undefined
   >();
@@ -43,25 +54,37 @@ const event: EventData = {
 describe("toSseState", () => {
   it("reports closed when the stream is not mounted", () => {
     expect(
-      toSseState({ status: "pending", fetchStatus: "fetching", data: undefined }, false),
+      toSseState({ data: undefined, isLoading: true, error: null }, false),
     ).toBe("closed");
   });
 
-  it("reports connecting until the first event arrives", () => {
+  it("reports connecting until the backend sends anything", () => {
     expect(
-      toSseState({ status: "pending", fetchStatus: "fetching", data: undefined }, true),
+      toSseState({ data: undefined, isLoading: true, error: null }, true),
     ).toBe("connecting");
   });
 
-  it("reports online once an event has been seen", () => {
+  it("reports idle when the stream is not fetching and has no data", () => {
     expect(
-      toSseState({ status: "success", fetchStatus: "fetching", data: [event] }, true),
+      toSseState({ data: undefined, isLoading: false, error: null }, true),
+    ).toBe("closed");
+  });
+
+  it("reports online for a live query holding one event", () => {
+    expect(
+      toSseState({ data: event, isLoading: false, error: null }, true),
+    ).toBe("online");
+  });
+
+  it("reports online for a streamed query holding many events", () => {
+    expect(
+      toSseState({ data: [event], isLoading: false, error: null }, true),
     ).toBe("online");
   });
 
   it("reports reconnecting after a drop", () => {
     expect(
-      toSseState({ status: "error", fetchStatus: "idle", data: [event] }, true),
+      toSseState({ data: event, isLoading: false, error: new Error("boom") }, true),
     ).toBe("reconnecting");
   });
 });

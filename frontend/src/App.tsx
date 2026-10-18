@@ -10,6 +10,7 @@ import {
   useEventNotifications,
   useEventStream,
   useHealth,
+  useLatestEvent,
 } from "./hooks";
 
 export default function App() {
@@ -17,21 +18,36 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   /**
-   * Both server-facing concerns live here, and only here:
+   * Every server-facing concern lives here, and only here:
    *
    * - `useHealth` decides whether the workspace is reachable at all.
-   * - `useEventStream` opens the one SSE connection, and is mounted only once
-   *   the backend answers, so a cold start does not spray reconnect attempts.
+   * - `useLatestEvent` is the stream as a live query — the newest event, which
+   *   is what the badge and the diagnostics line report.
+   * - `useEventStream` is the same stream accumulated, because the notification
+   *   log needs every frame (a live query keeps only the newest value). It is
+   *   mounted only once the backend answers, so a cold start does not spray
+   *   reconnect attempts.
    *
-   * Everything below receives what it needs as props, which keeps a single
-   * source of truth for each piece of server state.
+   * Everything below receives what it needs as props, which keeps one source of
+   * truth for each piece of server state.
    */
   const health = useHealth();
   const ready = health.data?.status === "ok";
 
+  const {
+    data: latest,
+    isLoading: isStreamConnecting,
+    error: streamError,
+    refetch: restartStream,
+  } = useLatestEvent({ enabled: ready });
+
   const stream = useEventStream({ enabled: ready });
   useEventNotifications(stream.data);
-  const sseState = toSseState(stream, ready);
+
+  const sseState = toSseState(
+    { data: latest, isLoading: isStreamConnecting, error: streamError },
+    ready,
+  );
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
@@ -41,6 +57,7 @@ export default function App() {
         onTabChange={setActiveTab}
         onOpenSettings={() => setIsSettingsOpen(true)}
         sseState={sseState}
+        onRestartStream={restartStream}
       />
 
       {/* Main Content Area */}
@@ -65,6 +82,7 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         sseState={sseState}
+        latestEvent={latest}
       />
 
       {/* Floating Notification Toasts */}

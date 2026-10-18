@@ -9,6 +9,7 @@ import {
   X,
 } from "lucide-react";
 import type { SseState } from "../hooks";
+import type { EventData } from "../rpc/contract";
 import { DEFAULT_API_ORIGIN } from "../lib/apiOrigin";
 import { queryClient } from "../lib/queryClient";
 import { useBackendStore } from "../stores/backend";
@@ -18,12 +19,15 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   sseState: SseState;
+  /** Newest event on the live stream, for the diagnostics line. */
+  latestEvent?: EventData;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
   onClose,
   sseState,
+  latestEvent,
 }) => {
   const {
     apiOrigin,
@@ -244,7 +248,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   data-testid="sse-state"
                   className="text-[11px] font-mono text-zinc-500"
                 >
-                  State: {sseState} &bull; {events.length} events
+                  State: {sseState} &bull; {events.length} events &bull; last:{" "}
+                  {latestEvent?.event ?? "—"}
                 </span>
                 {events.length > 0 && (
                   <button

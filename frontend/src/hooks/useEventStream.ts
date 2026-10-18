@@ -1,7 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { UseQueryResult } from "@tanstack/react-query";
 import { orpc } from "../rpc";
-import type { EventData } from "../rpc/contract";
 import type { QueryOverrides } from "./types";
 
 /** Connection state of the event stream, as shown in the header badge. */
@@ -11,20 +9,32 @@ type EventStreamOverrides = QueryOverrides<
   Parameters<typeof orpc.streamEvents.streamedOptions>[0]
 >;
 
-/** Reconnect delay after the stream drops (there is no server-side replay). */
+/**
+ * The fields {@link toSseState} reads: exactly the `useQuery` destructuring, so
+ * the mapping can be unit-tested without a renderer and against either stream
+ * hook (`useLatestEvent` or `useEventStream`).
+ */
+export interface SseSource {
+  /** Newest event (live query) or accumulated events (streamed query). */
+  data: unknown;
+  isLoading: boolean;
+  error: unknown;
+}
+
+/** Reconnect delay after the stream drops (the server does not replay). */
 const RECONNECT_INTERVAL_MS = 5_000;
 
 /**
- * `GET /api/v1/events` — the live event stream.
+ * `GET /api/v1/events` — **every** event of the session, in arrival order.
  *
  * Mounting the hook opens the SSE connection; unmounting aborts it (TanStack
  * cancels the in-flight query), so a single call site owns the stream.
  *
- * `data` **accumulates every event of the session** (`streamedOptions`), in
- * arrival order. That is deliberate: a render can publish `sketch.started` and
- * `sketch.completed` within the same frame, and a "latest event only" view would
- * drop the first one on the floor — the notification log would silently lose
- * history. Consumers that want just the newest event read `data.at(-1)`.
+ * `data` accumulates (`streamedOptions`), which is deliberate: a render can
+ * publish two events close together, and a live query would keep only the last
+ * one — the notification log would silently lose history and a failure toast
+ * could be missed. Consumers that want just the newest event should use
+ * `useLatestEvent`, which is a live query and cheaper to read from.
  *
  * If the connection drops, the query errors and `refetchInterval` reconnects
  * every {@link RECONNECT_INTERVAL_MS}; events published meanwhile are not
@@ -49,22 +59,24 @@ export function useEventStream(options?: EventStreamOverrides) {
 }
 
 /**
- * Derive the header badge state from the stream query.
+ * Derive the header badge state from a stream query.
  *
  * Kept as a pure function so the mapping is unit-testable without a renderer.
+ *
+ * "online" means an event has been received on this connection: the backend's
+ * keep-alive comments are consumed by the oRPC client and never become data, so
+ * a healthy but idle stream reads as "connecting". Events are not replayed, so
+ * that is the only liveness signal the stream offers.
  */
-export function toSseState(
-  result: Pick<UseQueryResult<readonly EventData[]>, "status" | "fetchStatus" | "data">,
-  enabled: boolean,
-): SseState {
+export function toSseState(source: SseSource, enabled: boolean): SseState {
   if (!enabled) {
     return "closed";
   }
-  if (result.status === "error") {
+  if (source.error) {
     return "reconnecting";
   }
-  if (result.data !== undefined) {
+  if (source.data !== undefined) {
     return "online";
   }
-  return result.fetchStatus === "fetching" ? "connecting" : "closed";
+  return source.isLoading ? "connecting" : "closed";
 }

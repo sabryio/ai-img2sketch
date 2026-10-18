@@ -17,8 +17,10 @@ interface HeaderProps {
   activeTab: "single" | "batch";
   onTabChange: (tab: "single" | "batch") => void;
   onOpenSettings: () => void;
-  /** Stream state owned by `App` (it holds the single SSE connection). */
+  /** Stream state owned by `App` (it holds the stream subscriptions). */
   sseState: SseState;
+  /** Reconnect the live event stream (clicking the SSE badge). */
+  onRestartStream: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -26,6 +28,7 @@ export const Header: React.FC<HeaderProps> = ({
   onTabChange,
   onOpenSettings,
   sseState,
+  onRestartStream,
 }) => {
   const { mode, setMode } = useBackendStore();
 
@@ -140,6 +143,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Backend Health Badge */}
             <button
               type="button"
+              data-testid="health-badge"
               onClick={() => health.refetch()}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                 ready
@@ -159,8 +163,16 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="font-semibold capitalize">{healthLabel}</span>
             </button>
 
-            {/* SSE Badge */}
-            {getSseBadge()}
+            {/* SSE Badge: click to reconnect the live event stream */}
+            <button
+              type="button"
+              data-testid="sse-badge"
+              onClick={onRestartStream}
+              title="Live event stream (GET /api/v1/events) — click to reconnect"
+              className="rounded-full focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
+            >
+              {getSseBadge()}
+            </button>
 
             {/* Mode Switcher */}
             <div className="hidden lg:flex items-center bg-zinc-900 border border-zinc-800 rounded-lg p-0.5 text-xs">

@@ -9,8 +9,9 @@
 export { useElapsed } from "./useElapsed";
 export { useEventNotifications } from "./useEventNotifications";
 export { useEventStream, toSseState } from "./useEventStream";
-export type { SseState } from "./useEventStream";
+export type { SseSource, SseState } from "./useEventStream";
 export { useGenerateBatch } from "./useGenerateBatch";
 export { useGenerateSketch } from "./useGenerateSketch";
 export { useHealth } from "./useHealth";
+export { useLatestEvent } from "./useLatestEvent";
 export type { QueryOverrides } from "./types";

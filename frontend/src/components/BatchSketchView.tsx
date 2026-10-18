@@ -109,11 +109,13 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
 
     setErrorDismissed(false);
 
-    // Docker mode: the container only sees the mounted media volume.
-    const backendInputDir =
-      mode === "docker"
-        ? mapHostPathToBackend(trimmed, "docker", pathConfig).backendPath
-        : trimmed;
+    // Both modes go through the mapper: sidecar only normalizes separators,
+    // Docker rewrites into the mounted volume the container can see.
+    const backendInputDir = mapHostPathToBackend(
+      trimmed,
+      mode,
+      pathConfig,
+    ).backendPath;
 
     try {
       await batch.mutateAsync({
