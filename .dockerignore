@@ -21,13 +21,14 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 
-# Local output/media
+# Local output/media (bind-mounted at runtime, never needed for a build)
 *.exe
 *.mp4
 *.wav
 *.mp3
 data
 output
+media
 
 # Docs (README.md stays — the wheel build reads it)
 *.md

@@ -9,6 +9,10 @@ __pycache__/
 # Video files
 *.mp4
 
+# Runtime client files and generated videos (docker-compose bind mounts)
+media/
+output/
+
 # Distribution / packaging
 .Python
 build/
