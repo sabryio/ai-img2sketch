@@ -91,12 +91,27 @@ export const StoredMediaSchema = z.object({
  * *inside* the JSON: application frames have no SSE `event:` name, so this key
  * is what a consumer switches on. Field names match the REST responses and the
  * event catalogue in `docs/api.md`.
+ *
+ * Every long operation publishes three lifecycle frames (`started`, then either
+ * `completed` or `failed`) plus, while it runs, `*.progress` frames. A progress
+ * frame repeats the identifying fields of its lifecycle events (`image` /
+ * `output_path`, or `input_dir`) so a client can attribute it to the run that
+ * asked for it without keeping state.
  */
 export const EventDataSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("sketch.started"),
     image: z.string(),
     output_path: z.string(),
+  }),
+  z.object({
+    event: z.literal("sketch.progress"),
+    image: z.string(),
+    output_path: z.string(),
+    percent: z.number().int().min(0).max(100),
+    label: z.string().optional(),
+    frame: z.number().int().optional(),
+    total_frames: z.number().int().optional(),
   }),
   z.object({
     event: z.literal("sketch.completed"),
@@ -112,6 +127,17 @@ export const EventDataSchema = z.discriminatedUnion("event", [
   z.object({
     event: z.literal("batch.started"),
     input_dir: z.string(),
+  }),
+  z.object({
+    event: z.literal("batch.progress"),
+    input_dir: z.string(),
+    percent: z.number().int().min(0).max(100),
+    label: z.string().optional(),
+    frame: z.number().int().optional(),
+    total_frames: z.number().int().optional(),
+    item_index: z.number().int().optional(),
+    item_total: z.number().int().optional(),
+    item_name: z.string().optional(),
   }),
   z.object({
     event: z.literal("batch.completed"),

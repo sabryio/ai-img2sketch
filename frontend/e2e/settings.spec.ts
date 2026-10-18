@@ -1,26 +1,30 @@
 import { expect, test } from "@playwright/test";
-import { containerPath, ensureFixtures, SINGLE_IMAGE, uiPath } from "./fixtures";
 import { openWorkspace } from "./helpers";
 
-test.beforeAll(() => {
-  ensureFixtures();
-});
-
 /**
- * Execution mode is not cosmetic: it decides whether a host path is passed
- * through or rewritten into the container's mounted volume. The mapping preview
- * in the single view is where the user sees that before submitting.
+ * Execution mode is not cosmetic: it decides whether a typed path can be handed
+ * to the backend as-is or has to be uploaded first. The mapping preview in the
+ * single view is where the user sees that before submitting.
  */
-test("execution mode decides whether the path is rewritten or passed through", async ({
+test("mode decides whether a typed path is uploaded or read as-is", async ({
   page,
 }) => {
   await openWorkspace(page);
 
-  // Docker is the default, and the preview says what the container will read.
+  // Docker is the default, and it has no host mounts: a host path is uploaded
+  // when the run starts.
   await expect(page.getByText("docker Mode")).toBeVisible();
-  await page.fill("#single-image-path", uiPath(SINGLE_IMAGE));
-  await expect(page.getByText("Backend Path Mapping (docker):")).toBeVisible();
-  await expect(page.getByText(containerPath(SINGLE_IMAGE))).toBeVisible();
+  await page.fill("#single-image-path", "D:/photos/cat.png");
+  await expect(page.getByText("Backend Path (docker):")).toBeVisible();
+  await expect(
+    page.getByText(/uploaded to the backend when the run starts/),
+  ).toBeVisible();
+
+  // A path the API itself handed back is already readable: nothing to upload.
+  await page.fill("#single-image-path", "/app/media/uploads/e2e/cat.png");
+  await expect(
+    page.getByText(/uploaded to the backend when the run starts/),
+  ).toHaveCount(0);
 
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByPlaceholder("http://localhost:8000")).toHaveValue(
@@ -35,10 +39,11 @@ test("execution mode decides whether the path is rewritten or passed through", a
   await page.getByRole("button", { name: "Cancel" }).click();
 
   await expect(page.getByText("sidecar Mode")).toBeVisible();
-  await expect(page.getByText("Backend Path Mapping (sidecar):")).toBeVisible();
+  await page.fill("#single-image-path", "D:/photos/cat.png");
+  await expect(page.getByText("Backend Path (sidecar):")).toBeVisible();
   await expect(
-    page.getByText(uiPath(SINGLE_IMAGE), { exact: false }).first(),
-  ).toBeVisible();
+    page.getByText(/uploaded to the backend when the run starts/),
+  ).toHaveCount(0);
 
   // Back to the default, so the visible state matches a fresh app.
   await page.getByRole("button", { name: "Settings" }).click();

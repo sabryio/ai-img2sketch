@@ -12,7 +12,9 @@ import type { SketchOptions } from "../rpc/contract";
 import { useStoreMedia } from "../hooks";
 import { toAppError } from "../lib/errors";
 import { stageFiles } from "../lib/media";
-import { pickImageFile } from "../lib/tauri";
+import { planInputPath } from "../lib/paths";
+import { pickImageFile, readHostImageFile } from "../lib/tauri";
+import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 
 interface AdvancedConfigFormProps {
@@ -24,6 +26,8 @@ interface AdvancedConfigFormProps {
   onChangeHandImagePath?: (path: string) => void;
   handMaskPath?: string;
   onChangeHandMaskPath?: (path: string) => void;
+  /** Called with each path the form uploaded, so the view can delete it later. */
+  onUploaded?: (backendPath: string) => void;
   isBatchMode?: boolean;
 }
 
@@ -36,11 +40,13 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   onChangeHandImagePath,
   handMaskPath = "",
   onChangeHandMaskPath,
+  onUploaded,
   isBatchMode = false,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [showRarelyTouched, setShowRarelyTouched] = useState(false);
   const addToast = useNotificationsStore((state) => state.addToast);
+  const mode = useBackendStore((state) => state.mode);
   const storeMedia = useStoreMedia();
 
   const updateField = <K extends keyof SketchOptions>(
@@ -54,9 +60,11 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
   };
 
   /**
-   * Pick one optional asset image. The desktop shell yields a path directly; a
-   * browser yields bytes, which are staged in the media volume so the backend
-   * can read them.
+   * Pick one optional asset image and make sure the backend can read it.
+   *
+   * A browser only has bytes, and a container never sees the host — so in either
+   * case the file is uploaded here and the field keeps the path the API answered
+   * with. Only a native backend is handed the host path itself.
    */
   const stagePickedImage = async (
     title: string,
@@ -70,24 +78,39 @@ export const AdvancedConfigForm: React.FC<AdvancedConfigFormProps> = ({
     if (!picked) {
       return;
     }
-    if (picked.path) {
+
+    const needsUpload = picked.file
+      ? true
+      : Boolean(picked.path && planInputPath(picked.path, mode).needsUpload);
+
+    if (!needsUpload && picked.path) {
       apply(picked.path);
       return;
     }
-    if (!picked.file) {
+
+    const file =
+      picked.file ??
+      (picked.path ? await readHostImageFile(picked.path) : null);
+    if (!file) {
+      addToast({
+        type: "error",
+        title: "Could not read the image",
+        message: `Failed to read ${picked.path ?? "the picked file"}. Pick it again so the app can upload it.`,
+      });
       return;
     }
 
     try {
-      const [storedPath] = await stageFiles([picked.file], (input) =>
+      const [storedPath] = await stageFiles([file], (input) =>
         storeMedia.mutateAsync(input),
       );
       apply(storedPath);
+      onUploaded?.(storedPath);
     } catch (error) {
       const appError = toAppError(error);
       addToast({
         type: "error",
-        title: "Could not stage the image",
+        title: "Could not upload the image",
         message: appError.message,
         verbatim: appError.verbatim,
       });

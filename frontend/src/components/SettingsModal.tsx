@@ -1,13 +1,5 @@
 import React, { useState } from "react";
-import {
-  Box,
-  Check,
-  FolderTree,
-  Radio,
-  Server,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Box, Check, Radio, Server, Trash2, X } from "lucide-react";
 import type { SseState } from "../hooks";
 import type { EventData } from "../rpc/contract";
 import { DEFAULT_API_ORIGIN } from "../lib/apiOrigin";
@@ -29,22 +21,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   sseState,
   latestEvent,
 }) => {
-  const {
-    apiOrigin,
-    setApiOrigin,
-    mode,
-    setMode,
-    pathConfig,
-    setPathConfig,
-  } = useBackendStore();
+  const { apiOrigin, setApiOrigin, mode, setMode } = useBackendStore();
 
   const events = useNotificationsStore((state) => state.events);
   const clearEvents = useNotificationsStore((state) => state.clearEvents);
 
   const [localApiOrigin, setLocalApiOrigin] = useState(apiOrigin);
-  const [projectRoot, setProjectRoot] = useState(pathConfig.projectRoot);
-  const [mediaSubdir, setMediaSubdir] = useState(pathConfig.mediaSubdir);
-  const [outputSubdir, setOutputSubdir] = useState(pathConfig.outputSubdir);
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   if (!isOpen) return null;
@@ -54,7 +36,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
     const originChanged = localApiOrigin.trim() !== apiOrigin;
     setApiOrigin(localApiOrigin);
-    setPathConfig({ projectRoot, mediaSubdir, outputSubdir });
 
     if (originChanged) {
       // Every cached result belongs to the old origin: drop them and let the
@@ -152,10 +133,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     Docker Container
                   </div>
                   <p className="text-[11px] text-zinc-500">
-                    Mounted volumes (
-                    <code className="font-mono text-zinc-400">/app/media</code>,{" "}
-                    <code className="font-mono text-zinc-400">/app/output</code>
-                    ).
+                    No host mounts: files are{" "}
+                    <span className="text-zinc-400">uploaded in</span> and{" "}
+                    <span className="text-zinc-400">downloaded out</span>.
                   </p>
                 </div>
               </label>
@@ -189,50 +169,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </p>
                 </div>
               </label>
-            </div>
-          </div>
-
-          {/* Docker Paths & Volume Mapping */}
-          <div className="space-y-3 pt-2 border-t border-zinc-800">
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-300">
-              <FolderTree className="w-4 h-4 text-indigo-400" />
-              Volume Mapping Subdirectories (Docker Mode)
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] text-zinc-400">
-                  Project Root
-                </label>
-                <input
-                  type="text"
-                  value={projectRoot}
-                  onChange={(e) => setProjectRoot(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded font-mono text-zinc-200"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-zinc-400">
-                  Media Subdir
-                </label>
-                <input
-                  type="text"
-                  value={mediaSubdir}
-                  onChange={(e) => setMediaSubdir(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded font-mono text-zinc-200"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-zinc-400">
-                  Output Subdir
-                </label>
-                <input
-                  type="text"
-                  value={outputSubdir}
-                  onChange={(e) => setOutputSubdir(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs bg-zinc-950 border border-zinc-800 rounded font-mono text-zinc-200"
-                />
-              </div>
             </div>
           </div>
 

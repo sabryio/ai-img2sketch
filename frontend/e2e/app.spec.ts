@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { ensureFixtures } from "./fixtures";
 import { openEventLog, openWorkspace } from "./helpers";
 
 /**
@@ -7,10 +6,6 @@ import { openEventLog, openWorkspace } from "./helpers";
  * gate must clear, the header must agree, and the event stream must be open and
  * idle before anything is generated.
  */
-test.beforeAll(() => {
-  ensureFixtures();
-});
-
 test("clears the startup gate and opens the event stream", async ({ page }) => {
   await openWorkspace(page);
 

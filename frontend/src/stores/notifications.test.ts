@@ -22,7 +22,7 @@ describe("notifications store", () => {
       type: "error",
       title: "Error (404)",
       message:
-        'File or folder not visible to the backend. In Docker mode, files must be located in the mounted media directory (e.g. ./media) to be accessible to the container. Image not found: /app/media/a.png',
+        "File or folder not visible to the backend. In Docker mode the container only reads files that were uploaded to it, so use the picker (or paste a path inside /app) instead of a host path. Image not found: /app/media/a.png",
     });
 
     expect(useNotificationsStore.getState().toasts).toHaveLength(1);

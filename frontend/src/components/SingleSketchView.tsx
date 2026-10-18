@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -7,40 +7,47 @@ import {
   Download,
   FileImage,
   Film,
-  FolderOpen,
   Info,
   Loader2,
   Play,
   Sparkles,
+  Trash2,
   Upload,
 } from "lucide-react";
-import { useElapsed, useGenerateSketch, useStoreMedia } from "../hooks";
-import type { SketchOptions } from "../rpc/contract";
-import { fetchArtifact } from "../rpc/artifacts";
+import {
+  useElapsed,
+  useGenerateSketch,
+  useRunProgress,
+  useStoreMedia,
+} from "../hooks";
+import type { EventData, SketchOptions } from "../rpc/contract";
+import {
+  artifactDownloadUrl,
+  discardArtifact,
+  fetchArtifact,
+} from "../rpc/artifacts";
 import { toAppError } from "../lib/errors";
 import { stageFiles } from "../lib/media";
+import { getBasename, planInputPath, planOutput } from "../lib/paths";
+import { frameDetail } from "../lib/progress";
 import {
-  getBasename,
-  mapBackendPathToHost,
-  mapHostPathToBackend,
-  planOutput,
-} from "../lib/paths";
-import {
-  convertPathToAssetUrl,
-  copyHostFile,
-  exportArtifactToHostFolder,
   isTauriEnvironment,
   pickImageFile,
+  readHostImageFile,
   saveArtifactBlob,
+  writeArtifactToFolder,
 } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
 import { OutputFolderField } from "./OutputFolderField";
+import { ProgressBar } from "./ProgressBar";
 
 interface SingleSketchViewProps {
   /** False once the backend stops answering; the form is then disabled. */
   ready: boolean;
+  /** Newest event on the stream; the live progress bar reads it. */
+  latestEvent?: EventData;
 }
 
 /** Form defaults, matching the engine's documented defaults. */
@@ -52,8 +59,11 @@ const DEFAULT_CONFIG: SketchOptions = {
   black_pixel_threshold: 10,
 };
 
-export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => {
-  const { mode, pathConfig } = useBackendStore();
+export const SingleSketchView: React.FC<SingleSketchViewProps> = ({
+  ready,
+  latestEvent,
+}) => {
+  const { mode } = useBackendStore();
   const addToast = useNotificationsStore((state) => state.addToast);
   const storeMedia = useStoreMedia();
 
@@ -64,19 +74,24 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   const [handMaskPath, setHandMaskPath] = useState<string>("");
   const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
   const [errorDismissed, setErrorDismissed] = useState(false);
-  /** True while a browser-picked file is being uploaded to the media volume. */
+  /** True while bytes are being handed to the backend (pick or submit). */
   const [isStaging, setIsStaging] = useState(false);
   /** True while a produced video is being fetched and handed to the user. */
   const [isDownloading, setIsDownloading] = useState(false);
-  const [videoAssetUrl, setVideoAssetUrl] = useState<string>("");
+  /** True while a produced video is being deleted from the backend. */
+  const [isDeleting, setIsDeleting] = useState(false);
   const [videoFailedToLoad, setVideoFailedToLoad] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
   const [copiedError, setCopiedError] = useState<boolean>(false);
+  /** Container paths this session uploaded, so they can be removed again. */
+  const [uploadedInputs, setUploadedInputs] = useState<string[]>([]);
+  /** Produced paths already deleted from the backend. */
+  const [deletedOutputs, setDeletedOutputs] = useState<string[]>([]);
 
   /**
-   * Where the video ends up. Empty means the backend writes beside the image;
-   * a folder outside the volumes is exported by the desktop app after the
-   * render (see `planOutput`).
+   * Where the video ends up. Empty means the backend writes beside the image; a
+   * host folder is written by the desktop app after the render, or downloaded
+   * when no host write is possible (see `planOutput`).
    */
   const outputPlan = useMemo(
     () => planOutput(outputDir, mode, isTauriEnvironment()),
@@ -84,41 +99,70 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   );
 
   /**
+   * Whether the backend can read the typed path, or the bytes have to be
+   * uploaded first. Docker mode has no host mounts, so a host path always has to
+   * be sent; a path the API already returned (the result of an upload) is used
+   * as-is.
+   */
+  const inputPlan = useMemo(() => planInputPath(imagePath, mode), [imagePath, mode]);
+
+  const trackUpload = (path: string) => {
+    setUploadedInputs((previous) =>
+      previous.includes(path) ? previous : [...previous, path],
+    );
+  };
+
+  /**
    * Hand a finished video to the folder the user asked for when the backend
-   * could not write there itself.
+   * could not write there itself: fetch it, then write it (desktop only).
    */
   const exportResult = async (backendOutputPath: string): Promise<void> => {
-    if (!outputPlan.exportDir) {
+    const exportDir = outputPlan.exportDir;
+    if (!exportDir) {
       return;
     }
 
-    const exported = await exportArtifactToHostFolder(
-      mapBackendPathToHost(backendOutputPath, mode, pathConfig),
-      outputPlan.exportDir,
-    );
+    try {
+      const blob = await fetchArtifact(backendOutputPath);
+      const written = await writeArtifactToFolder(
+        blob,
+        exportDir,
+        getBasename(backendOutputPath),
+      );
 
-    addToast(
-      exported
-        ? {
-            type: "success",
-            title: "Video Exported",
-            message: `Copied to ${outputPlan.exportDir}`,
-          }
-        : {
-            type: "error",
-            title: "Could not export the video",
-            message: `Failed to copy the video into ${outputPlan.exportDir}. Use Download to save it instead.`,
-          },
-    );
+      addToast(
+        written
+          ? {
+              type: "success",
+              title: "Video Exported",
+              message: `Saved to ${exportDir}`,
+            }
+          : {
+              type: "warning",
+              title: "Could not export the video",
+              message: `The backend rendered it inside its container, but nothing was written to ${exportDir}. Use "Download MP4" to save it instead.`,
+            },
+      );
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not export the video",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    }
   };
 
   const sketch = useGenerateSketch({
     onSuccess: async (data) => {
-      const hostPath = mapBackendPathToHost(data.output_path, mode, pathConfig);
       addToast({
         type: "success",
         title: "Sketch Video Generated",
-        message: `Video saved to ${hostPath}`,
+        message:
+          mode === "sidecar"
+            ? `Video saved to ${data.output_path}`
+            : `${getBasename(data.output_path)} is ready. Download it to keep a copy, or delete it from the backend.`,
       });
       await exportResult(data.output_path);
     },
@@ -136,35 +180,13 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
   });
 
   const elapsedSec = useElapsed(sketch.isPending);
+  const progress = useRunProgress(latestEvent, sketch.isPending, "single");
   const result = sketch.data;
   const appError =
     sketch.error && !errorDismissed ? toAppError(sketch.error, mode) : null;
-
-  /** Host-visible path of the produced video (Docker paths are translated). */
-  const resolvedHostPath = result
-    ? mapBackendPathToHost(result.output_path, mode, pathConfig)
-    : "";
-
-  // Resolve the asset URL once per result: the Tauri asset protocol is the only
-  // way a `<video>` can read a host path, and it is absent in a browser.
-  useEffect(() => {
-    if (!resolvedHostPath) {
-      setVideoAssetUrl("");
-      return;
-    }
-
-    let cancelled = false;
-    setVideoFailedToLoad(false);
-    convertPathToAssetUrl(resolvedHostPath).then((url) => {
-      if (!cancelled) {
-        setVideoAssetUrl(url);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [resolvedHostPath]);
+  const resultDeleted = result
+    ? deletedOutputs.includes(result.output_path)
+    : false;
 
   const handlePickImage = async () => {
     const picked = await pickImageFile();
@@ -172,7 +194,8 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
       return;
     }
 
-    // Desktop: the shell handed over a host path, which submit() stages.
+    // Desktop: the shell hands over a host path. It is uploaded on submit if the
+    // backend cannot read it where it is (see `inputPlan`).
     if (picked.path) {
       setImagePath(picked.path);
       setErrorDismissed(false);
@@ -180,8 +203,8 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
       return;
     }
 
-    // Browser: the file exists only as bytes, so send them to the media volume
-    // and keep the path the backend reported back — it is already readable.
+    // Browser: the file exists only as bytes, so upload it now and keep the path
+    // the backend reported back — it is readable by definition.
     if (!picked.file) {
       return;
     }
@@ -192,13 +215,14 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
         storeMedia.mutateAsync(input),
       );
       setImagePath(storedPath);
+      trackUpload(storedPath);
       setErrorDismissed(false);
       sketch.reset();
     } catch (error) {
       const appError = toAppError(error, mode);
       addToast({
         type: "error",
-        title: "Could not stage the image",
+        title: "Could not upload the image",
         message: appError.message,
         verbatim: appError.verbatim,
       });
@@ -216,24 +240,40 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
 
     setErrorDismissed(false);
 
-    // Stage the input where the backend can actually read it. In Docker mode
-    // the container only sees the mounted media volume, so a host file has to
-    // be copied in first — and if that copy fails the request is never sent,
-    // because it could only come back as a 404.
+    // Docker mode has no host mounts, so a typed host path has to travel through
+    // the API before the backend can open it. Failing here is better than
+    // sending it: the only possible answer would be a 404.
     let backendImagePath = trimmed;
-    if (mode === "docker") {
-      const mapped = mapHostPathToBackend(trimmed, "docker", pathConfig);
-      backendImagePath = mapped.backendPath;
-      if (mapped.needsCopy && mapped.destinationHostPath) {
-        const copied = await copyHostFile(trimmed, mapped.destinationHostPath);
-        if (!copied) {
-          addToast({
-            type: "error",
-            title: "Could not stage the input file",
-            message: `Failed to copy ${trimmed} into the mounted media volume (${mapped.destinationHostPath}). The container would not be able to read the original location.`,
-          });
-          return;
-        }
+    if (inputPlan.needsUpload) {
+      const file = await readHostImageFile(trimmed);
+      if (!file) {
+        addToast({
+          type: "error",
+          title: "Could not read the image",
+          message: `Failed to read ${trimmed}. Use "Pick Image" so the app can upload the file to the backend.`,
+        });
+        return;
+      }
+
+      setIsStaging(true);
+      try {
+        const [storedPath] = await stageFiles([file], (input) =>
+          storeMedia.mutateAsync(input),
+        );
+        backendImagePath = storedPath;
+        setImagePath(storedPath);
+        trackUpload(storedPath);
+      } catch (error) {
+        const appError = toAppError(error, mode);
+        addToast({
+          type: "error",
+          title: "Could not upload the image",
+          message: appError.message,
+          verbatim: appError.verbatim,
+        });
+        return;
+      } finally {
+        setIsStaging(false);
       }
     }
 
@@ -257,7 +297,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
 
   /** Fetch the produced video from the backend and save it where asked. */
   const handleDownload = async () => {
-    if (!result || isDownloading) {
+    if (!result || isDownloading || resultDeleted) {
       return;
     }
 
@@ -292,6 +332,64 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
     }
   };
 
+  /** Delete the produced video from the backend, keeping the user's copy. */
+  const handleDelete = async () => {
+    if (!result || isDeleting || resultDeleted) {
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      await discardArtifact(result.output_path);
+      setDeletedOutputs((previous) => [...previous, result.output_path]);
+      addToast({
+        type: "success",
+        title: "Deleted from the backend",
+        message: `${getBasename(result.output_path)} is gone from the server. Any copy you downloaded is untouched.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not delete the video",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  /** Remove everything this session uploaded, so nothing is left behind. */
+  const handleDeleteInputs = async () => {
+    if (uploadedInputs.length === 0 || sketch.isPending) {
+      return;
+    }
+
+    try {
+      await Promise.all(uploadedInputs.map((path) => discardArtifact(path)));
+      const removed = uploadedInputs.length;
+      if (uploadedInputs.includes(imagePath.trim())) {
+        // The field points at a file that no longer exists.
+        setImagePath("");
+      }
+      setUploadedInputs([]);
+      addToast({
+        type: "success",
+        title: "Uploads deleted",
+        message: `${removed} file(s) removed from the backend.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not delete the uploads",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    }
+  };
+
   const handleCopyPath = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopiedPath(true);
@@ -304,10 +402,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
     setTimeout(() => setCopiedError(false), 2500);
   };
 
-  // Preview of the mapping the backend will apply to the typed path.
-  const pathMappingInfo = imagePath
-    ? mapHostPathToBackend(imagePath, mode, pathConfig)
-    : null;
+  const previewUrl = result ? artifactDownloadUrl(result.output_path, "inline") : "";
 
   return (
     <div className="space-y-6">
@@ -324,7 +419,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
           </p>
         </div>
 
-        {/* Mode Indicator & Path Advice */}
+        {/* Mode Indicator */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
           <span className="text-zinc-400">Target Mode:</span>
           <span
@@ -338,7 +433,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
           </span>
           <span className="text-[11px] text-zinc-500 hidden md:inline">
             {mode === "docker"
-              ? "(Volumes: ./media & ./output)"
+              ? "(Upload in, download out)"
               : "(Native Direct Host FS)"}
           </span>
         </div>
@@ -370,7 +465,7 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
                 type="text"
                 value={imagePath}
                 onChange={(e) => setImagePath(e.target.value)}
-                placeholder="Click 'Pick Image' or enter file path (e.g. ./media/portrait.png)"
+                placeholder="Click 'Pick Image' or paste a path the backend can read"
                 className="w-full px-3.5 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono"
                 required
               />
@@ -390,32 +485,53 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
             </button>
           </div>
 
-          {/* Path Mapping Clarification Helper */}
-          {pathMappingInfo && (
+          {/* What the backend will read, and who has to move the file */}
+          {imagePath && (
             <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 text-xs text-zinc-400 space-y-1">
               <div className="flex items-center gap-2 text-zinc-300 font-medium">
                 <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span>Backend Path Mapping ({mode}):</span>
+                <span>Backend Path ({mode}):</span>
               </div>
               <div className="font-mono text-[11px] text-zinc-400 pl-5 space-y-0.5">
                 <div>
-                  Host path: <span className="text-zinc-200">{imagePath}</span>
+                  Selected: <span className="text-zinc-200">{imagePath}</span>
                 </div>
                 <div>
                   Backend sees:{" "}
                   <span className="text-indigo-300 font-semibold">
-                    {pathMappingInfo.backendPath}
+                    {inputPlan.path || "—"}
                   </span>
                 </div>
-                {pathMappingInfo.needsCopy && (
+                {inputPlan.needsUpload && (
                   <div className="text-amber-400/90 text-[10px]">
-                    &bull; The file is copied into the Docker volume on submit:{" "}
-                    {pathMappingInfo.destinationHostPath}
+                    &bull; The file is uploaded to the backend when the run
+                    starts: the container only reads files it was given.
                   </div>
                 )}
               </div>
             </div>
           )}
+
+          {/* Files this session put on the backend: the user decides whether they stay */}
+          {uploadedInputs.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-zinc-500">
+                {uploadedInputs.length} file(s) uploaded to the backend this
+                session.
+              </span>
+              <button
+                type="button"
+                onClick={handleDeleteInputs}
+                disabled={sketch.isPending}
+                data-testid="single-delete-uploads"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 border border-zinc-700 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                Delete uploads
+              </button>
+            </div>
+          )}
+
           {/* Where the produced video should go (default: beside the image) */}
           <div className="pt-3 border-t border-zinc-800/80">
             <OutputFolderField
@@ -437,50 +553,62 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
           onChangeHandImagePath={setHandImagePath}
           handMaskPath={handMaskPath}
           onChangeHandMaskPath={setHandMaskPath}
+          onUploaded={trackUpload}
           isBatchMode={false}
         />
 
-        {/* Action Controls & Submit Button */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-xs text-zinc-500">
-            {sketch.isPending ? (
-              <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
-                <Clock className="w-4 h-4" />
-                Synthesizing sketch frames... Elapsed: {elapsedSec}s
-              </span>
-            ) : (
-              <span>Synchronous generation. May take several seconds.</span>
-            )}
-          </div>
+        {/* Action Controls, Live Progress & Submit Button */}
+        <div className="space-y-3">
+          {sketch.isPending && (
+            <ProgressBar
+              testId="single-progress"
+              percent={progress?.percent ?? null}
+              label={progress?.label || "Preparing the sketch…"}
+              detail={frameDetail(progress)}
+            />
+          )}
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            {result && (
-              <button
-                type="button"
-                onClick={() => sketch.reset()}
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-              >
-                Clear Result
-              </button>
-            )}
-
-            <button
-              type="submit"
-              disabled={!imagePath.trim() || sketch.isPending || !ready}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
-            >
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-xs text-zinc-500">
               {sketch.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating ({elapsedSec}s)...
-                </>
+                <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
+                  <Clock className="w-4 h-4" />
+                  Synthesizing sketch frames... Elapsed: {elapsedSec}s
+                </span>
               ) : (
-                <>
-                  <Play className="w-4 h-4 fill-white" />
-                  Generate Sketch Video
-                </>
+                <span>Synchronous generation. May take several seconds.</span>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              {result && (
+                <button
+                  type="button"
+                  onClick={() => sketch.reset()}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+                >
+                  Clear Result
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={!imagePath.trim() || sketch.isPending || !ready}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
+              >
+                {sketch.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Generating ({elapsedSec}s)...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-white" />
+                    Generate Sketch Video
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </form>
@@ -543,34 +671,75 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
       {/* Generation Result & Video Preview Section */}
       {result && (
         <div className="p-6 rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl space-y-5 animate-fade-in">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
               <CheckCircle2 className="w-5 h-5" />
               Sketch Video Generated Successfully
             </div>
 
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={isDownloading}
-              data-testid="single-download"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors shrink-0"
-            >
-              {isDownloading ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Download className="w-3.5 h-3.5" />
-              )}
-              {isDownloading ? "Preparing…" : "Download MP4"}
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={isDeleting || resultDeleted}
+                data-testid="single-delete"
+                title="Delete the file from the backend"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 text-xs font-medium border border-zinc-700 transition-colors"
+              >
+                {isDeleting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                {isDeleting ? "Deleting…" : "Delete"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={isDownloading || resultDeleted}
+                data-testid="single-download"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-medium transition-colors"
+              >
+                {isDownloading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                {isDownloading ? "Preparing…" : "Download MP4"}
+              </button>
+            </div>
           </div>
 
           {/* Video Player or Fallback */}
           <div className="relative aspect-video max-w-2xl mx-auto rounded-xl overflow-hidden bg-black border border-zinc-800 flex items-center justify-center">
-            {videoAssetUrl && !videoFailedToLoad ? (
+            {resultDeleted ? (
+              <div className="p-6 text-center space-y-2">
+                <Trash2 className="w-12 h-12 text-zinc-600 mx-auto" />
+                <p className="text-sm font-semibold text-zinc-300">
+                  Deleted from the backend
+                </p>
+                <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+                  The file is gone from the server. Run the sketch again if you
+                  need another copy.
+                </p>
+              </div>
+            ) : videoFailedToLoad ? (
+              <div className="p-6 text-center space-y-3">
+                <Film className="w-12 h-12 text-zinc-600 mx-auto" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-zinc-300">
+                    The video could not be played here
+                  </p>
+                  <p className="text-xs text-zinc-500 max-w-sm mx-auto">
+                    The file exists on the backend. Use Download MP4 to save it.
+                  </p>
+                </div>
+              </div>
+            ) : (
               <video
                 data-testid="single-video"
-                src={videoAssetUrl}
+                src={previewUrl}
                 controls
                 autoPlay
                 className="w-full h-full object-contain"
@@ -580,33 +749,20 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
               >
                 Your browser/webview does not support the video tag.
               </video>
-            ) : (
-              <div className="p-6 text-center space-y-3">
-                <Film className="w-12 h-12 text-zinc-600 mx-auto" />
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-zinc-300">
-                    Video generated at output path
-                  </p>
-                  <p className="text-xs text-zinc-500 max-w-sm mx-auto">
-                    The file is on disk. Playback needs the desktop app: a
-                    browser sandbox cannot load a local path.
-                  </p>
-                </div>
-              </div>
             )}
           </div>
 
-          {/* Output Path & Reveal Button */}
+          {/* Backend File Path & Download Actions */}
           <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-2">
             <div className="flex items-center justify-between text-xs text-zinc-400">
               <span className="font-semibold text-zinc-300">
-                Resolved Host Output:
+                {mode === "sidecar"
+                  ? "Output File (host):"
+                  : "File on the Backend:"}
               </span>
               <button
                 type="button"
-                onClick={() =>
-                  handleCopyPath(resolvedHostPath || result.output_path)
-                }
+                onClick={() => handleCopyPath(result.output_path)}
                 className="flex items-center gap-1 text-indigo-400 hover:text-indigo-300"
               >
                 <Copy className="w-3.5 h-3.5" />
@@ -617,23 +773,13 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
               data-testid="single-output-path"
               className="p-2.5 rounded bg-zinc-900 border border-zinc-800 font-mono text-xs text-zinc-200 break-all select-all"
             >
-              {resolvedHostPath || result.output_path}
+              {result.output_path}
             </div>
 
-            <div className="flex flex-wrap items-center justify-between pt-2 gap-2 text-xs">
-              <span className="text-[11px] text-zinc-500 font-mono">
-                Backend output: {result.output_path}
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  handleCopyPath(resolvedHostPath || result.output_path)
-                }
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-1.5 transition-colors border border-zinc-700"
-              >
-                <FolderOpen className="w-3.5 h-3.5" />
-                Reveal in folder
-              </button>
+            <div className="text-[11px] text-zinc-500">
+              {mode === "sidecar"
+                ? "Written directly by the native backend, at the path above."
+                : "Kept inside the backend until you download it. Deleting it here does not touch a copy you already saved, and the container's scratch space is cleared on restart anyway."}
             </div>
           </div>
         </div>

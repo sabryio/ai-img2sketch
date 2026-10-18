@@ -22,14 +22,14 @@ export default function App() {
    *
    * - `useHealth` decides whether the workspace is reachable at all.
    * - `useLatestEvent` is the stream as a live query — the newest event, which
-   *   is what the badge and the diagnostics line report.
+   *   is what the badge reports and what the views read for live progress.
    * - `useEventStream` is the same stream accumulated, because the notification
    *   log needs every frame (a live query keeps only the newest value). It is
    *   mounted only once the backend answers, so a cold start does not spray
    *   reconnect attempts.
    *
    * Everything below receives what it needs as props, which keeps one source of
-   * truth for each piece of server state.
+   * truth for each piece of server state: the views do not open a second stream.
    */
   const health = useHealth();
   const ready = health.data?.status === "ok";
@@ -69,9 +69,9 @@ export default function App() {
           /* Main Workspace: Active once GET /api/v1/health is OK */
           <div className="space-y-6">
             {activeTab === "single" ? (
-              <SingleSketchView ready={ready} />
+              <SingleSketchView ready={ready} latestEvent={latest} />
             ) : (
-              <BatchSketchView ready={ready} />
+              <BatchSketchView ready={ready} latestEvent={latest} />
             )}
           </div>
         )}

@@ -21,9 +21,8 @@ function describePlan(plan: OutputPlan, value: string): React.ReactNode {
   if (!typed) {
     return (
       <>
-        Empty: every video is written next to its image (inside{" "}
-        <code className="font-mono text-zinc-400">./media</code> when the backend
-        runs in a container).
+        Empty: every video is written next to its image, inside the backend's own
+        directory.
       </>
     );
   }

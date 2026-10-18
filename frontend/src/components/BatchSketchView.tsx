@@ -11,11 +11,21 @@ import {
   Layers,
   Loader2,
   Play,
+  Trash2,
   XCircle,
 } from "lucide-react";
-import { useElapsed, useGenerateBatch, useStoreMedia } from "../hooks";
-import type { BatchItem, SketchOptions } from "../rpc/contract";
-import { fetchArtifact } from "../rpc/artifacts";
+import {
+  useElapsed,
+  useGenerateBatch,
+  useRunProgress,
+  useStoreMedia,
+} from "../hooks";
+import type { BatchItem, EventData, SketchOptions } from "../rpc/contract";
+import {
+  artifactDownloadUrl,
+  discardArtifact,
+  fetchArtifact,
+} from "../rpc/artifacts";
 import { toAppError } from "../lib/errors";
 import {
   IMAGE_EXTENSIONS,
@@ -24,27 +34,26 @@ import {
   parentDirectory,
   stageFiles,
 } from "../lib/media";
+import { getBasename, planInputPath, planOutput } from "../lib/paths";
+import { frameDetail, itemDetail } from "../lib/progress";
 import {
-  getBasename,
-  mapBackendPathToHost,
-  mapHostPathToBackend,
-  planOutput,
-} from "../lib/paths";
-import {
-  convertPathToAssetUrl,
-  exportArtifactToHostFolder,
   isTauriEnvironment,
   pickImageDirectory,
+  readHostImageDirectory,
   saveArtifactBlob,
+  writeArtifactToFolder,
 } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
 import { AdvancedConfigForm } from "./AdvancedConfigForm";
 import { OutputFolderField } from "./OutputFolderField";
+import { ProgressBar } from "./ProgressBar";
 
 interface BatchSketchViewProps {
   /** False once the backend stops answering; the form is then disabled. */
   ready: boolean;
+  /** Newest event on the stream; the live progress bar reads it. */
+  latestEvent?: EventData;
 }
 
 /** Form defaults, matching the engine's documented defaults. */
@@ -68,8 +77,20 @@ function summarize(items: BatchItem[]): BatchSummary {
   return { succeeded, failed: items.length - succeeded, total: items.length };
 }
 
-export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
-  const { mode, pathConfig } = useBackendStore();
+/** Output paths of the rows that a batch already deleted from the backend. */
+function remainingOutputs(items: BatchItem[], deleted: string[]): string[] {
+  return items
+    .map((item) => item.output_path)
+    .filter(
+      (path): path is string => Boolean(path) && !deleted.includes(path as string),
+    );
+}
+
+export const BatchSketchView: React.FC<BatchSketchViewProps> = ({
+  ready,
+  latestEvent,
+}) => {
+  const { mode } = useBackendStore();
   const addToast = useNotificationsStore((state) => state.addToast);
   const storeMedia = useStoreMedia();
 
@@ -77,24 +98,39 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
   const [outputDir, setOutputDir] = useState<string>("");
   const [config, setConfig] = useState<SketchOptions>(DEFAULT_CONFIG);
   const [errorDismissed, setErrorDismissed] = useState(false);
-  /** True while a browser-picked folder is being uploaded to the media volume. */
+  /** True while a picked folder is being uploaded to the backend. */
   const [isStaging, setIsStaging] = useState(false);
   /** Backend path of the row currently being downloaded, `""` when idle. */
   const [downloadingPath, setDownloadingPath] = useState<string>("");
+  /** Backend path of the row currently being deleted, `""` when idle. */
+  const [deletingPath, setDeletingPath] = useState<string>("");
+  /** Container paths this session uploaded, so they can be removed again. */
+  const [uploadedInputs, setUploadedInputs] = useState<string[]>([]);
+  /** Produced paths already deleted from the backend. */
+  const [deletedOutputs, setDeletedOutputs] = useState<string[]>([]);
   const [selectedPreviewVideo, setSelectedPreviewVideo] = useState<{
     image: string;
     path: string;
-    assetUrl: string;
   } | null>(null);
 
   /**
    * Where the videos end up. Empty means the backend writes beside each image;
-   * a folder outside the volumes is exported by the desktop app after the run.
+   * a host folder is written by the desktop app after the run, or downloaded
+   * when no host write is possible (see `planOutput`).
    */
   const outputPlan = useMemo(
     () => planOutput(outputDir, mode, isTauriEnvironment()),
     [outputDir, mode],
   );
+
+  const inputPlan = useMemo(
+    () => planInputPath(inputDir, mode),
+    [inputDir, mode],
+  );
+
+  const trackUpload = (paths: string[]) => {
+    setUploadedInputs((previous) => [...new Set([...previous, ...paths])]);
+  };
 
   /**
    * Hand every produced video to the folder the user asked for when the backend
@@ -106,23 +142,31 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
       return;
     }
 
-    const copied = await Promise.all(
-      backendOutputPaths.map((backendPath) =>
-        exportArtifactToHostFolder(
-          mapBackendPathToHost(backendPath, mode, pathConfig),
-          exportDir,
-        ),
-      ),
-    );
-    const exported = copied.filter(Boolean).length;
+    const written: boolean[] = [];
+    for (const backendPath of backendOutputPaths) {
+      try {
+        const blob = await fetchArtifact(backendPath);
+        written.push(
+          await writeArtifactToFolder(
+            blob,
+            exportDir,
+            getBasename(backendPath),
+          ),
+        );
+      } catch {
+        // Reported in the summary below; the videos stay downloadable either way.
+        written.push(false);
+      }
+    }
 
+    const exported = written.filter(Boolean).length;
     addToast({
-      type: exported === copied.length ? "success" : "warning",
+      type: exported === written.length ? "success" : "warning",
       title:
-        exported === copied.length
+        exported === written.length
           ? "Videos Exported"
           : "Some Videos Were Not Exported",
-      message: `${exported}/${copied.length} videos copied to ${exportDir}.`,
+      message: `${exported}/${written.length} videos written to ${exportDir}. The rest are still on the backend: use Download.`,
     });
   };
 
@@ -154,6 +198,7 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
   });
 
   const elapsedSec = useElapsed(batch.isPending);
+  const progress = useRunProgress(latestEvent, batch.isPending, "batch");
   const result = batch.data;
   const summary = result ? summarize(result.items) : null;
   const appError =
@@ -165,7 +210,8 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
       return;
     }
 
-    // Desktop: the shell handed over a folder path the backend can scan itself.
+    // Desktop: a host folder. It is uploaded on submit if the backend cannot
+    // read it where it is (see `inputPlan`).
     if (picked.path) {
       setInputDir(picked.path);
       setErrorDismissed(false);
@@ -194,18 +240,19 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
       );
       const directory = parentDirectory(paths[0]);
       setInputDir(directory);
+      trackUpload(paths);
       setErrorDismissed(false);
       batch.reset();
       addToast({
         type: "success",
         title: "Folder Uploaded",
-        message: `${paths.length} image(s) staged; the backend reads them from ${directory}.`,
+        message: `${paths.length} image(s) uploaded; the backend reads them from ${directory}.`,
       });
     } catch (error) {
       const appError = toAppError(error, mode);
       addToast({
         type: "error",
-        title: "Could not stage the folder",
+        title: "Could not upload the folder",
         message: appError.message,
         verbatim: appError.verbatim,
       });
@@ -223,13 +270,43 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
 
     setErrorDismissed(false);
 
-    // Both modes go through the mapper: sidecar only normalizes separators,
-    // Docker rewrites into the mounted volume the container can see.
-    const backendInputDir = mapHostPathToBackend(
-      trimmed,
-      mode,
-      pathConfig,
-    ).backendPath;
+    // Docker mode has no host mounts: a typed host folder has to be read and
+    // uploaded before the backend can scan it.
+    let backendInputDir = trimmed;
+    if (inputPlan.needsUpload) {
+      const files = await readHostImageDirectory(trimmed);
+      if (!files || files.length === 0) {
+        addToast({
+          type: "error",
+          title: "Could not read the folder",
+          message: `No readable images in ${trimmed}. Use "Select Folder" so the app can upload them to the backend.`,
+        });
+        return;
+      }
+
+      setIsStaging(true);
+      try {
+        const paths = await stageFiles(
+          files,
+          (input) => storeMedia.mutateAsync(input),
+          newUploadBucket(),
+        );
+        backendInputDir = parentDirectory(paths[0]);
+        setInputDir(backendInputDir);
+        trackUpload(paths);
+      } catch (error) {
+        const appError = toAppError(error, mode);
+        addToast({
+          type: "error",
+          title: "Could not upload the folder",
+          message: appError.message,
+          verbatim: appError.verbatim,
+        });
+        return;
+      } finally {
+        setIsStaging(false);
+      }
+    }
 
     try {
       await batch.mutateAsync({
@@ -279,20 +356,102 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
     }
   };
 
-  const handlePreviewItem = async (item: BatchItem) => {
-    if (!item.output_path) return;
-    const hostPath = mapBackendPathToHost(item.output_path, mode, pathConfig);
-    const url = await convertPathToAssetUrl(hostPath);
-    setSelectedPreviewVideo({
-      image: item.image,
-      path: hostPath,
-      assetUrl: url,
-    });
+  /** Delete one produced video, keeping whatever the user already saved. */
+  const deleteOne = async (backendPath: string): Promise<void> => {
+    await discardArtifact(backendPath);
+    setDeletedOutputs((previous) =>
+      previous.includes(backendPath) ? previous : [...previous, backendPath],
+    );
   };
 
-  const pathMappingInfo = inputDir
-    ? mapHostPathToBackend(inputDir, mode, pathConfig)
-    : null;
+  const handleDeleteItem = async (item: BatchItem) => {
+    if (!item.output_path || deletingPath) {
+      return;
+    }
+
+    setDeletingPath(item.output_path);
+    try {
+      await deleteOne(item.output_path);
+      addToast({
+        type: "success",
+        title: "Deleted from the backend",
+        message: `${getBasename(item.output_path)} is gone from the server.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not delete the video",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setDeletingPath("");
+    }
+  };
+
+  /** Delete every produced video the run left on the backend. */
+  const handleDeleteAll = async () => {
+    if (!result) {
+      return;
+    }
+
+    const pending = remainingOutputs(result.items, deletedOutputs);
+    if (pending.length === 0) {
+      return;
+    }
+
+    setDeletingPath("all");
+    try {
+      for (const backendPath of pending) {
+        await deleteOne(backendPath);
+      }
+      addToast({
+        type: "success",
+        title: "Deleted from the backend",
+        message: `${pending.length} video(s) removed from the server.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not delete every video",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    } finally {
+      setDeletingPath("");
+    }
+  };
+
+  /** Remove everything this session uploaded, so nothing is left behind. */
+  const handleDeleteUploads = async () => {
+    if (uploadedInputs.length === 0 || batch.isPending) {
+      return;
+    }
+
+    try {
+      await Promise.all(uploadedInputs.map((path) => discardArtifact(path)));
+      const removed = uploadedInputs.length;
+      if (uploadedInputs.includes(inputDir.trim())) {
+        setInputDir("");
+      }
+      setUploadedInputs([]);
+      addToast({
+        type: "success",
+        title: "Uploads deleted",
+        message: `${removed} file(s) removed from the backend.`,
+      });
+    } catch (error) {
+      const appError = toAppError(error, mode);
+      addToast({
+        type: "error",
+        title: "Could not delete the uploads",
+        message: appError.message,
+        verbatim: appError.verbatim,
+      });
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -348,7 +507,7 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
               type="text"
               value={inputDir}
               onChange={(e) => setInputDir(e.target.value)}
-              placeholder="e.g. ./media/batch_images or /path/to/folder"
+              placeholder="Click 'Select Folder' or paste a folder the backend can read"
               className="flex-1 px-3.5 py-2.5 text-xs bg-zinc-950 border border-zinc-800 rounded-xl text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 font-mono"
               required
             />
@@ -367,21 +526,53 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
             </button>
           </div>
 
-          {/* Path Mapping helper */}
-          {pathMappingInfo && (
+          {/* What the backend will scan, and who has to move the files */}
+          {inputDir && (
             <div className="p-3 rounded-lg bg-zinc-950/80 border border-zinc-800/80 text-xs text-zinc-400 space-y-1">
               <div className="flex items-center gap-2 text-zinc-300 font-medium">
                 <Info className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span>Backend Directory Mapping ({mode}):</span>
+                <span>Backend Directory ({mode}):</span>
               </div>
-              <div className="font-mono text-[11px] text-zinc-400 pl-5">
-                Backend directory request:{" "}
-                <span className="text-indigo-300 font-semibold">
-                  {pathMappingInfo.backendPath}
-                </span>
+              <div className="font-mono text-[11px] text-zinc-400 pl-5 space-y-0.5">
+                <div>
+                  Selected: <span className="text-zinc-200">{inputDir}</span>
+                </div>
+                <div>
+                  Backend sees:{" "}
+                  <span className="text-indigo-300 font-semibold">
+                    {inputPlan.path || "—"}
+                  </span>
+                </div>
+                {inputPlan.needsUpload && (
+                  <div className="text-amber-400/90 text-[10px]">
+                    &bull; The images are uploaded to the backend when the run
+                    starts: the container only reads files it was given.
+                  </div>
+                )}
               </div>
             </div>
           )}
+
+          {/* Files this session put on the backend: the user decides whether they stay */}
+          {uploadedInputs.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[11px]">
+              <span className="text-zinc-500">
+                {uploadedInputs.length} file(s) uploaded to the backend this
+                session.
+              </span>
+              <button
+                type="button"
+                onClick={handleDeleteUploads}
+                disabled={batch.isPending}
+                data-testid="batch-delete-uploads"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 border border-zinc-700 transition-colors"
+              >
+                <Trash2 className="w-3 h-3" />
+                Delete uploads
+              </button>
+            </div>
+          )}
+
           {/* Where the produced videos should go (default: beside each image) */}
           <div className="pt-3 border-t border-zinc-800/80">
             <OutputFolderField
@@ -400,50 +591,62 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
           isBatchMode={true}
         />
 
-        {/* Action Controls & Submit Button */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="text-xs text-zinc-500">
-            {batch.isPending ? (
-              <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
-                <Clock className="w-4 h-4" />
-                Processing batch images... Elapsed: {elapsedSec}s
-              </span>
-            ) : (
-              <span>
-                Batch processing runs synchronously through all valid image
-                formats.
-              </span>
-            )}
-          </div>
+        {/* Action Controls, Live Progress & Submit Button */}
+        <div className="space-y-3">
+          {batch.isPending && (
+            <ProgressBar
+              testId="batch-progress"
+              percent={progress?.percent ?? null}
+              label={progress?.label || "Preparing the batch…"}
+              detail={frameDetail(progress)}
+              itemDetail={itemDetail(progress)}
+            />
+          )}
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            {result && (
-              <button
-                type="button"
-                onClick={() => batch.reset()}
-                className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
-              >
-                Clear Table
-              </button>
-            )}
-
-            <button
-              type="submit"
-              disabled={!inputDir.trim() || batch.isPending || !ready}
-              className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
-            >
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="text-xs text-zinc-500">
               {batch.isPending ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Processing Batch ({elapsedSec}s)...
-                </>
+                <span className="flex items-center gap-2 text-indigo-400 animate-pulse font-mono">
+                  <Clock className="w-4 h-4" />
+                  Processing batch images... Elapsed: {elapsedSec}s
+                </span>
               ) : (
-                <>
-                  <Play className="w-4 h-4 fill-white" />
-                  Run Batch Generation
-                </>
+                <span>
+                  Batch processing runs synchronously through all valid image
+                  formats.
+                </span>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-3 w-full sm:w-auto">
+              {result && (
+                <button
+                  type="button"
+                  onClick={() => batch.reset()}
+                  className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium transition-colors"
+                >
+                  Clear Table
+                </button>
+              )}
+
+              <button
+                type="submit"
+                disabled={!inputDir.trim() || batch.isPending || !ready}
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-2.5 px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-lg shadow-indigo-600/25"
+              >
+                {batch.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processing Batch ({elapsedSec}s)...
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 fill-white" />
+                    Run Batch Generation
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </form>
@@ -493,21 +696,42 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
               </div>
             </div>
 
-            <div
-              data-testid="batch-summary"
-              className="flex items-center gap-3 text-xs font-medium"
-            >
-              <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                {summary.succeeded} Succeeded
-              </span>
-              {summary.failed > 0 && (
-                <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                  {summary.failed} Failed
+            <div className="flex flex-wrap items-center gap-3">
+              <div
+                data-testid="batch-summary"
+                className="flex items-center gap-3 text-xs font-medium"
+              >
+                <span className="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  {summary.succeeded} Succeeded
                 </span>
-              )}
-              <span className="px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
-                Total: {summary.total}
-              </span>
+                {summary.failed > 0 && (
+                  <span className="px-2.5 py-1 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                    {summary.failed} Failed
+                  </span>
+                )}
+                <span className="px-2.5 py-1 rounded-md bg-zinc-800 text-zinc-300">
+                  Total: {summary.total}
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleDeleteAll}
+                disabled={
+                  Boolean(deletingPath) ||
+                  remainingOutputs(result.items, deletedOutputs).length === 0
+                }
+                data-testid="batch-delete-all"
+                title="Delete every produced video from the backend"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 text-xs font-medium border border-zinc-700 transition-colors"
+              >
+                {deletingPath === "all" ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                {deletingPath === "all" ? "Deleting…" : "Delete all"}
+              </button>
             </div>
           </div>
 
@@ -518,16 +742,18 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
                 <tr className="bg-zinc-950/80 border-b border-zinc-800 text-zinc-400 font-semibold uppercase text-[10px] tracking-wider">
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Image Filename</th>
-                  <th className="py-3 px-4">Host Output Video Path</th>
+                  <th className="py-3 px-4">
+                    Output Video ({mode === "sidecar" ? "host" : "backend"})
+                  </th>
                   <th className="py-3 px-4 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/80 font-mono">
                 {result.items.map((item, idx) => {
                   const hasError = Boolean(item.error);
-                  const hostPath = item.output_path
-                    ? mapBackendPathToHost(item.output_path, mode, pathConfig)
-                    : "";
+                  const outputPath = item.output_path ?? "";
+                  const isDeleted =
+                    Boolean(outputPath) && deletedOutputs.includes(outputPath);
 
                   return (
                     <tr
@@ -545,6 +771,11 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
                             <XCircle className="w-3.5 h-3.5" />
                             Failed
+                          </span>
+                        ) : isDeleted ? (
+                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                            <Trash2 className="w-3.5 h-3.5" />
+                            Deleted
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
@@ -566,19 +797,31 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
                             {item.error}
                           </span>
                         ) : (
-                          <span className="text-zinc-400 text-[11px]">
-                            {hostPath || "—"}
+                          <span
+                            data-testid="batch-output-path"
+                            className={
+                              isDeleted
+                                ? "text-zinc-600 text-[11px] line-through"
+                                : "text-zinc-400 text-[11px]"
+                            }
+                          >
+                            {outputPath || "—"}
                           </span>
                         )}
                       </td>
 
                       {/* Action Column */}
                       <td className="py-3 px-4 text-right whitespace-nowrap">
-                        {!hasError && item.output_path ? (
+                        {!hasError && outputPath && !isDeleted ? (
                           <div className="inline-flex items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => handlePreviewItem(item)}
+                              onClick={() =>
+                                setSelectedPreviewVideo({
+                                  image: item.image,
+                                  path: outputPath,
+                                })
+                              }
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 font-sans text-xs transition-colors border border-indigo-500/30"
                             >
                               <Film className="w-3.5 h-3.5" />
@@ -591,14 +834,31 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
                               data-testid="batch-download"
                               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 font-sans text-xs transition-colors border border-zinc-700"
                             >
-                              {downloadingPath === item.output_path ? (
+                              {downloadingPath === outputPath ? (
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                               ) : (
                                 <Download className="w-3.5 h-3.5" />
                               )}
-                              {downloadingPath === item.output_path
+                              {downloadingPath === outputPath
                                 ? "Preparing…"
                                 : "Download"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteItem(item)}
+                              disabled={Boolean(deletingPath)}
+                              data-testid="batch-delete"
+                              title="Delete this video from the backend"
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-zinc-800 hover:bg-rose-600/20 disabled:opacity-50 text-zinc-300 hover:text-rose-300 font-sans text-xs transition-colors border border-zinc-700"
+                            >
+                              {deletingPath === outputPath ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                              {deletingPath === outputPath
+                                ? "Deleting…"
+                                : "Delete"}
                             </button>
                           </div>
                         ) : (
@@ -637,8 +897,9 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
             </div>
 
             <div className="aspect-video bg-black rounded-xl overflow-hidden flex items-center justify-center border border-zinc-800">
+              {/* Streamed from the API: a container path is not playable directly. */}
               <video
-                src={selectedPreviewVideo.assetUrl}
+                src={artifactDownloadUrl(selectedPreviewVideo.path, "inline")}
                 controls
                 autoPlay
                 className="w-full h-full object-contain"

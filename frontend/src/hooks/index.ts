@@ -14,5 +14,6 @@ export { useGenerateBatch } from "./useGenerateBatch";
 export { useGenerateSketch } from "./useGenerateSketch";
 export { useHealth } from "./useHealth";
 export { useLatestEvent } from "./useLatestEvent";
+export { useRunProgress } from "./useRunProgress";
 export { useStoreMedia } from "./useStoreMedia";
 export type { QueryOverrides } from "./types";

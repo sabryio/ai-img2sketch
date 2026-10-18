@@ -290,52 +290,70 @@ export async function spawnSidecarBackend(): Promise<LifecycleResult> {
 }
 
 /**
- * Copy a file on the host, used to stage Docker inputs into the mounted media
- * directory. Returns `false` in a browser, where the copy cannot happen.
+ * Read a host image's bytes, so a container that cannot see the host can be
+ * given them.
+ *
+ * Returns `null` in a browser (there is no host filesystem to read) and when the
+ * file cannot be read — callers report that rather than sending a path the
+ * backend would only answer with a 404.
  */
-export async function copyHostFile(
-  sourcePath: string,
-  destinationPath: string,
-): Promise<boolean> {
+export async function readHostImageFile(path: string): Promise<File | null> {
   if (!isTauriEnvironment()) {
-    console.warn(
-      `Cannot copy ${sourcePath} to ${destinationPath}: not running in the desktop app`,
-    );
-    return false;
+    return null;
   }
 
   try {
-    const { copyFile } = await import("@tauri-apps/plugin-fs");
-    await copyFile(sourcePath, destinationPath);
-    return true;
+    const { readFile } = await import("@tauri-apps/plugin-fs");
+    const bytes = await readFile(path);
+    return new File([bytes], getBasename(path));
   } catch (err) {
-    console.error("tauri-plugin-fs copyFile failed", err);
-    return false;
+    console.error(`Could not read ${path}`, err);
+    return null;
   }
 }
 
+/** True for the extensions both the pickers and the backend's store accept. */
+function isSupportedImage(name: string): boolean {
+  const lower = name.toLowerCase();
+  return [".png", ".jpg", ".jpeg", ".webp", ".bmp"].some((extension) =>
+    lower.endsWith(extension),
+  );
+}
+
 /**
- * Convert a host file path into a URL a `<video>` element can load.
+ * Read every image in a host folder.
  *
- * In the desktop app that is the Tauri asset protocol; in a browser there is no
- * such protocol, so the path is returned unchanged and the player fails
- * visibly rather than pretending to have a URL.
+ * The batch counterpart of {@link readHostImageFile}: a native backend can scan
+ * a folder itself, a container cannot, so the desktop app reads the folder's
+ * images and uploads them. Returns `null` in a browser, and for a folder that
+ * cannot be read.
  */
-export async function convertPathToAssetUrl(filePath: string): Promise<string> {
-  if (!filePath) {
-    return "";
+export async function readHostImageDirectory(
+  path: string,
+): Promise<File[] | null> {
+  if (!isTauriEnvironment()) {
+    return null;
   }
 
-  if (isTauriEnvironment()) {
-    try {
-      const { convertFileSrc } = await import("@tauri-apps/api/core");
-      return convertFileSrc(filePath);
-    } catch {
-      return `asset://localhost/${filePath.replace(/\\/g, "/")}`;
+  try {
+    const { readDir, readFile } = await import("@tauri-apps/plugin-fs");
+    const entries = await readDir(path);
+    const separator = path.includes("\\") ? "\\" : "/";
+    const files: File[] = [];
+
+    for (const entry of entries) {
+      if (entry.isDirectory || !isSupportedImage(entry.name)) {
+        continue;
+      }
+      const bytes = await readFile(`${path}${separator}${entry.name}`);
+      files.push(new File([bytes], entry.name));
     }
-  }
 
-  return filePath;
+    return files;
+  } catch (err) {
+    console.error(`Could not read the folder ${path}`, err);
+    return null;
+  }
 }
 
 /** Result of handing a produced file to the user's machine. */
@@ -440,15 +458,17 @@ export async function saveArtifactBlob(
 }
 
 /**
- * Copy a produced file into a host folder the backend cannot write to itself.
+ * Write an already-fetched video into a host folder.
  *
- * Desktop only — it is the one place where "render in the volume, then put it
+ * Desktop only — it is the one place where "render in the container, then put it
  * where the user asked" needs no dialog per file. A browser returns `false` and
- * the UI offers a download instead.
+ * the UI offers a download instead, because a page cannot write to a host path
+ * on its own.
  */
-export async function exportArtifactToHostFolder(
-  sourcePath: string,
+export async function writeArtifactToFolder(
+  blob: Blob,
   directory: string,
+  filename: string,
 ): Promise<boolean> {
   if (!isTauriEnvironment()) {
     return false;
@@ -456,12 +476,12 @@ export async function exportArtifactToHostFolder(
 
   const folder = directory.replace(/[\\/]+$/, "");
   try {
-    const { copyFile, mkdir } = await import("@tauri-apps/plugin-fs");
+    const { mkdir, writeFile } = await import("@tauri-apps/plugin-fs");
     await mkdir(folder, { recursive: true });
-    await copyFile(sourcePath, `${folder}/${getBasename(sourcePath)}`);
+    await writeFile(`${folder}/${filename}`, new Uint8Array(await blob.arrayBuffer()));
     return true;
   } catch (err) {
-    console.error("tauri-plugin-fs export failed", err);
+    console.error("tauri-plugin-fs write failed", err);
     return false;
   }
 }

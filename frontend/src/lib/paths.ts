@@ -1,71 +1,34 @@
 /**
- * Path mapping rules for Docker vs Sidecar modes.
+ * Where files live, per backend mode.
  *
- * Docker mode:
- * - The backend container only sees mounted volumes:
- *   - /app/media  -> mapped to host <project-root>/media
- *   - /app/output -> mapped to host <project-root>/output
- * - Picked host files must be placed/copied into the media folder so Docker can read them.
- * - Result paths returned as `/app/output/<filename>` must be mapped back to `<project-root>/output/<filename>`.
+ * Docker mode
+ * -----------
+ * The container has no view of the host filesystem: it owns two directories of
+ * its own (`/app/media` for uploads, `/app/output` for renders) and nothing
+ * else. So a host path is not a path the backend can be handed — it is a file
+ * to *read and upload* first, after which the API answers with the path it now
+ * lives at. The same is true in the other direction: a produced video stays in
+ * the container until the client downloads it.
  *
- * Sidecar mode:
- * - The backend runs as a native host binary (`img2sketch-api`) with direct filesystem access.
- * - Request paths and output paths are plain local paths as-is.
+ * Sidecar mode
+ * ------------
+ * The backend is a native process on this machine, so host paths are handed
+ * over as-is, in both directions.
  */
 
 /**
  * How the backend is reached:
- * - `docker` — container with the `./media` and `./output` volumes mounted
+ * - `docker` — container that can only see what the client uploads
  * - `sidecar` — native process with direct access to host paths
  */
 export type BackendMode = "docker" | "sidecar";
 
-export interface PathConfig {
-  projectRoot: string;
-  mediaSubdir: string;
-  outputSubdir: string;
-}
+/** Prefix of the directories the Docker backend owns. */
+const CONTAINER_ROOT = "/app";
 
-export const DEFAULT_PATH_CONFIG: PathConfig = {
-  projectRoot: ".",
-  mediaSubdir: "media",
-  outputSubdir: "output",
-};
-
-/**
- * Normalizes slashes in a path to forward slashes.
- */
+/** Normalizes slashes in a path to forward slashes. */
 export function normalizePath(p: string): string {
   return p.replace(/\\/g, "/");
-}
-
-/** Joins two fragments with exactly one slash (no resolution). */
-function joinFragments(parent: string, child: string): string {
-  return normalizePath(`${parent}/${child}`)
-    .replace(/\/{2,}/g, "/")
-    .replace(/\/$/, "");
-}
-
-/** Drops a leading `./` so `./media/x` and `media/x` compare equal. */
-function stripDotSlash(p: string): string {
-  return p.replace(/^\.\//, "");
-}
-
-/**
- * Returns the subpath of `path` inside `dir`, `""` when they are the same, or
- * `null` when `path` is not inside `dir`. String-based: host paths can be
- * relative (`./media/...`), so no filesystem resolution is involved.
- */
-function relativeInside(path: string, dir: string): string | null {
-  const normalizedDir = stripDotSlash(dir);
-  const normalizedPath = stripDotSlash(path);
-  if (normalizedPath === normalizedDir) {
-    return "";
-  }
-  if (normalizedPath.startsWith(`${normalizedDir}/`)) {
-    return normalizedPath.slice(normalizedDir.length + 1);
-  }
-  return null;
 }
 
 /**
@@ -78,123 +41,52 @@ export function getBasename(filePath: string): string {
 }
 
 /**
- * Converts a picked local host path to the path expected by the backend,
- * based on whether Docker mode or Sidecar mode is active.
+ * True when the backend can open this path where it is.
  *
- * In Docker mode a path that is **already** inside the mounted media folder
- * keeps its subpath and needs no copy — the container reads it where it is.
- * Only files from elsewhere have to be staged, and those are flattened to the
- * top of the volume because that is the one name guaranteed to be free.
+ * A sidecar process reads host paths directly. A container only reads its own
+ * directories, so anything else has to be uploaded first.
  */
-export function mapHostPathToBackend(
-  hostPath: string,
-  mode: BackendMode,
-  config: PathConfig = DEFAULT_PATH_CONFIG,
-): { backendPath: string; needsCopy: boolean; destinationHostPath?: string } {
-  const norm = normalizePath(hostPath.trim());
-  if (!norm) {
-    return { backendPath: "", needsCopy: false };
-  }
-
+export function isBackendPath(path: string, mode: BackendMode): boolean {
   if (mode === "sidecar") {
-    return { backendPath: norm, needsCopy: false };
+    return true;
   }
+  const norm = normalizePath(path.trim());
+  return norm === CONTAINER_ROOT || norm.startsWith(`${CONTAINER_ROOT}/`);
+}
 
-  // Already addressed the way the container sees it.
-  if (norm === "/app/media" || norm.startsWith("/app/media/")) {
-    return { backendPath: norm, needsCopy: false };
-  }
-
-  const hostMediaDir = joinFragments(config.projectRoot, config.mediaSubdir);
-
-  // Already staged inside the mounted folder (repo-relative `./media/...` or an
-  // absolute `<project-root>/media/...`): no copy, and the subpath survives.
-  const staged = relativeInside(norm, hostMediaDir);
-  if (staged === "") {
-    return { backendPath: "/app/media", needsCopy: false };
-  }
-  if (staged !== null) {
-    return { backendPath: joinFragments("/app/media", staged), needsCopy: false };
-  }
-
-  const filename = getBasename(norm);
-  return {
-    backendPath: `/app/media/${filename}`,
-    needsCopy: true,
-    destinationHostPath: joinFragments(hostMediaDir, filename),
-  };
+/** What has to happen to an input before the backend can read it. */
+export interface InputPathPlan {
+  /** Path to send once any upload has happened. */
+  path: string;
+  /** True when the bytes must be uploaded first (see `stageFiles`). */
+  needsUpload: boolean;
 }
 
 /**
- * The two volumes the container mounts, as `[host dir, container dir]` pairs.
- */
-function mountPairs(config: PathConfig): Array<[string, string]> {
-  return [
-    [joinFragments(config.projectRoot, config.mediaSubdir), "/app/media"],
-    [joinFragments(config.projectRoot, config.outputSubdir), "/app/output"],
-  ];
-}
-
-/**
- * Maps a path that is already inside one of the mounts to its container form,
- * or `null` when it is inside neither. Both mounts count: videos are written
- * beside their image (`./media/...`) by default, and into `./output/...` when
- * the user asks for it.
- */
-function mapInsideMounts(norm: string, config: PathConfig): string | null {
-  for (const [hostDir, containerDir] of mountPairs(config)) {
-    const relative = relativeInside(norm, hostDir);
-    if (relative !== null) {
-      return relative ? joinFragments(containerDir, relative) : containerDir;
-    }
-  }
-  return null;
-}
-
-/**
- * Converts an output directory to the path the backend should write to.
+ * Decide whether an input path can be sent as-is or has to be uploaded.
  *
- * Docker mode can only write inside its volumes, so a relative `./output/...`
- * (the documented default), an absolute `<project-root>/output/...` or a folder
- * beside the image (`./media/...`) becomes its `/app/...` form, and a container
- * path is kept as-is. A folder outside the volumes is also passed through
- * unchanged: the UI does not silently redirect a location the user never staged
- * into the container (see {@link planOutput}, which decides what to do about it).
+ * Docker mode says "upload" for anything that is not already a container path —
+ * including a path that happens to be inside the project, because the container
+ * cannot see the project either. A path the API itself returned from an earlier
+ * upload is already a container path and is sent unchanged.
  */
-export function mapOutputDirToBackend(
-  outputDir: string,
-  mode: BackendMode,
-  config: PathConfig = DEFAULT_PATH_CONFIG,
-): string {
-  const norm = normalizePath(outputDir.trim());
-  if (!norm || mode === "sidecar") {
-    return norm;
+export function planInputPath(input: string, mode: BackendMode): InputPathPlan {
+  const trimmed = normalizePath(input.trim());
+  if (!trimmed) {
+    return { path: "", needsUpload: false };
   }
 
-  // Already addressed the way the container sees it.
-  if (norm === "/app" || norm.startsWith("/app/")) {
-    return norm;
-  }
-
-  return mapInsideMounts(norm, config) ?? norm;
+  return { path: trimmed, needsUpload: !isBackendPath(trimmed, mode) };
 }
 
 /** Why a typed output folder is not handed to the backend as `output_dir`. */
 export type OutputNote =
-  /** Outside the volumes: render in the volume, the desktop app copies it out. */
+  /** Outside the container: render inside it, the desktop app copies it out. */
   | "exported"
-  /** Outside the volumes, and a browser cannot copy: the user downloads it. */
+  /** Outside the container, and a browser cannot copy: the user downloads it. */
   | "download";
 
-/**
- * What the frontend will do with the output folder the user typed.
- *
- * Docker mode adds a constraint the CLI does not have: the container can only
- * write into its two volumes. A folder outside them still works, but in two
- * steps — render inside the volume, then hand the file to the host. The desktop
- * app copies it; a browser offers a download, because it cannot write to a host
- * path on its own.
- */
+/** What the frontend will do with the output folder the user typed. */
 export interface OutputPlan {
   /** `output_dir` to send; `undefined` means "beside the selected image". */
   backendOutputDir?: string;
@@ -207,7 +99,13 @@ export interface OutputPlan {
 /**
  * Decide between "the backend writes there" and "the host receives it after".
  *
- * @param canExportToHost - true in the desktop shell, which can copy a produced
+ * Docker mode adds a constraint the CLI does not have: the container can only
+ * write into its own directories. A host folder still works, but in two steps —
+ * render inside the container, then hand the file to the host. The desktop app
+ * writes it straight into the folder; a browser offers a download, because a
+ * page cannot write to a host path on its own.
+ *
+ * @param canExportToHost - true in the desktop shell, which can write a fetched
  *   file into any host folder; false in a browser, which can only hand the bytes
  *   to its own download UI.
  */
@@ -215,7 +113,6 @@ export function planOutput(
   outputDir: string,
   mode: BackendMode,
   canExportToHost: boolean,
-  config: PathConfig = DEFAULT_PATH_CONFIG,
 ): OutputPlan {
   const norm = normalizePath(outputDir.trim());
   if (!norm) {
@@ -227,52 +124,13 @@ export function planOutput(
     return { backendOutputDir: norm };
   }
 
-  const mapped = mapOutputDirToBackend(norm, mode, config);
-  const insideVolumes =
-    mapped !== norm || norm === "/app" || norm.startsWith("/app/");
-  if (insideVolumes) {
-    return { backendOutputDir: mapped };
+  // Only the container's own directory can be handed over unchanged.
+  if (norm === CONTAINER_ROOT || norm.startsWith(`${CONTAINER_ROOT}/`)) {
+    return { backendOutputDir: norm };
   }
 
-  // A host folder the container cannot reach: render in the volume, then move
-  // the result out.
   return {
     exportDir: norm,
     note: canExportToHost ? "exported" : "download",
   };
-}
-
-/**
- * Converts an output path returned by the backend back to the host filesystem path.
- */
-export function mapBackendPathToHost(
-  backendPath: string,
-  mode: BackendMode,
-  config: PathConfig = DEFAULT_PATH_CONFIG,
-): string {
-  const norm = normalizePath(backendPath.trim());
-  if (!norm) return "";
-
-  if (mode === "sidecar") {
-    return norm;
-  }
-
-  // Docker mode: map `/app/output/...` back to `<projectRoot>/output/...`
-  if (norm.startsWith("/app/output/")) {
-    const rel = norm.replace("/app/output/", "");
-    return joinFragments(
-      joinFragments(config.projectRoot, config.outputSubdir),
-      rel,
-    );
-  }
-
-  if (norm.startsWith("/app/media/")) {
-    const rel = norm.replace("/app/media/", "");
-    return joinFragments(
-      joinFragments(config.projectRoot, config.mediaSubdir),
-      rel,
-    );
-  }
-
-  return norm;
 }

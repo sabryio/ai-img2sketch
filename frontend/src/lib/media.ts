@@ -1,10 +1,12 @@
 /**
  * Browser file picking: from a picked `File` to a path the backend can open.
  *
- * A browser cannot hand the container a host path, so the bytes travel through
- * `POST /api/v1/media` and come back as a path inside the mounted media volume.
- * Everything in here is deliberately free of React and of the API client: the
- * views own the mutation, this module owns the encoding and the rules.
+ * A container (and a browser) cannot hand the backend a host path, so the bytes
+ * travel through `POST /api/v1/media` and come back as a path the backend owns.
+ * The desktop app reads a picked host file the same way when the backend cannot
+ * reach it. Everything in here is deliberately free of React and of the API
+ * client: the views own the mutation, this module owns the encoding and the
+ * rules.
  */
 
 import type { StoreMediaRequest, StoredMedia } from "../rpc/contract";

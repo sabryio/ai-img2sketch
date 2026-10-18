@@ -1,10 +1,6 @@
 import { create } from "zustand";
 import { getApiOrigin, setApiOrigin } from "../lib/apiOrigin";
-import {
-  DEFAULT_PATH_CONFIG,
-  type BackendMode,
-  type PathConfig,
-} from "../lib/paths";
+import type { BackendMode } from "../lib/paths";
 import {
   isTauriEnvironment,
   probeDockerDaemon,
@@ -14,8 +10,8 @@ import {
 } from "../lib/tauri";
 
 /**
- * Desktop/process concerns only: how the backend is reached (mode, volume
- * paths, origin) and the lifecycle commands that start it.
+ * Desktop/process concerns only: how the backend is reached (mode, origin) and
+ * the lifecycle commands that start it.
  *
  * It deliberately owns **no** network state — liveness lives in `useHealth`,
  * the event stream in `useEventStream` — so there is one source of truth for
@@ -23,7 +19,6 @@ import {
  */
 interface BackendStore {
   mode: BackendMode;
-  pathConfig: PathConfig;
   apiOrigin: string;
 
   dockerRunning: boolean;
@@ -35,7 +30,6 @@ interface BackendStore {
 
   setMode: (mode: BackendMode) => void;
   setApiOrigin: (origin: string) => void;
-  setPathConfig: (config: Partial<PathConfig>) => void;
   probeDocker: () => Promise<boolean>;
   startDocker: () => Promise<void>;
   stopDocker: () => Promise<void>;
@@ -43,17 +37,16 @@ interface BackendStore {
 }
 
 /**
- * Docker is how the service ships: one image, and the container's `./media` /
- * `./output` mounts are the only paths it can read and write. The desktop build
- * and a browser (dev server or Playwright) therefore both start in Docker mode;
- * the native sidecar stays one click away in Settings for people running the
- * `img2sketch-api` binary directly.
+ * Docker is how the service ships: one image, and the only files it can read are
+ * the ones a client uploaded to it. The desktop build and a browser (dev server
+ * or Playwright) therefore both start in Docker mode; the native sidecar stays
+ * one click away in Settings for people running the `img2sketch-api` binary
+ * directly.
  */
 const DEFAULT_MODE: BackendMode = "docker";
 
 export const useBackendStore = create<BackendStore>((set, get) => ({
   mode: DEFAULT_MODE,
-  pathConfig: DEFAULT_PATH_CONFIG,
   apiOrigin: getApiOrigin(),
 
   dockerRunning: false,
@@ -69,12 +62,6 @@ export const useBackendStore = create<BackendStore>((set, get) => ({
 
   setApiOrigin: (origin: string) => {
     set({ apiOrigin: setApiOrigin(origin) });
-  },
-
-  setPathConfig: (partial: Partial<PathConfig>) => {
-    set((state) => ({
-      pathConfig: { ...state.pathConfig, ...partial },
-    }));
   },
 
   probeDocker: async () => {

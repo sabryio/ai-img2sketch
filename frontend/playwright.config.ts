@@ -6,13 +6,14 @@ import { defineConfig } from "@playwright/test";
  * - the Docker backend (`docker compose up -d`, health on 127.0.0.1:8000)
  * - the Vite dev server (`bun run dev`, port 3000)
  *
- * Nothing is mocked: the specs drive the UI, the UI maps host paths into the
- * container's mounted volumes, the API renders real MP4s, and the specs verify
- * those files on disk. That is also the mode the app starts in, so the suite
- * exercises what a user actually gets.
+ * Nothing is mocked: the specs drive the UI, the UI uploads the inputs to the
+ * container and downloads the results, the API renders real MP4s, and the specs
+ * fetch those files back through the API. That is also the mode the app starts
+ * in, so the suite exercises what a user actually gets.
  *
- * Fixtures live inside `media/` and `output/` (the compose mounts) so the
- * container can see them — see `e2e/fixtures.ts`.
+ * The container has no host mounts, so the fixtures are uploaded through
+ * `POST /api/v1/media` and the specs only ever hold container paths — see
+ * `e2e/fixtures.ts`.
  *
  * Both servers are reused when already running, so a long-lived Docker stack is
  * left exactly as it is. Rebuild it first (`docker compose build`) after a
@@ -20,7 +21,6 @@ import { defineConfig } from "@playwright/test";
  */
 export default defineConfig({
   testDir: "./e2e",
-  globalSetup: "./e2e/global-setup.ts",
   // One render at a time: the backend is CPU-bound and the specs share a
   // workspace directory.
   fullyParallel: false,

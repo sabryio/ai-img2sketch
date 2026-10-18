@@ -1,161 +1,88 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PATH_CONFIG,
-  mapBackendPathToHost,
-  mapHostPathToBackend,
-  mapOutputDirToBackend,
+  getBasename,
+  isBackendPath,
+  normalizePath,
+  planInputPath,
   planOutput,
 } from "./paths";
 
-describe("Paths Mapping Unit Tests (Docker vs Sidecar)", () => {
-  const customConfig = {
-    projectRoot: "/my/project",
-    mediaSubdir: "media",
-    outputSubdir: "output",
-  };
-
-  it("preserves paths as-is in sidecar mode", () => {
-    const input = "/home/user/photos/cat.png";
-    const mapped = mapHostPathToBackend(input, "sidecar");
-    expect(mapped.backendPath).toBe(input);
-    expect(mapped.needsCopy).toBe(false);
-
-    const output = "/home/user/photos/cat_sketch.mp4";
-    const hostOutput = mapBackendPathToHost(output, "sidecar");
-    expect(hostOutput).toBe(output);
+/**
+ * The path rules are what keeps a Docker backend from being handed a path it
+ * cannot open. They are pinned here because a wrong answer is not a cosmetic
+ * bug: the request would come back as a 404 from the API.
+ */
+describe("Path helpers", () => {
+  it("normalizes Windows separators", () => {
+    expect(normalizePath("C:\\images\\cat.png")).toBe("C:/images/cat.png");
+    expect(normalizePath("./media/a.png")).toBe("./media/a.png");
   });
 
-  it("maps host path to /app/media/<filename> and flags copy in Docker mode", () => {
-    const input = "/Users/artist/Desktop/drawing.jpg";
-    const mapped = mapHostPathToBackend(input, "docker", customConfig);
-
-    expect(mapped.backendPath).toBe("/app/media/drawing.jpg");
-    expect(mapped.needsCopy).toBe(true);
-    expect(mapped.destinationHostPath).toBe("/my/project/media/drawing.jpg");
-  });
-
-  it("keeps the subpath of a file already inside the mounted media folder", () => {
-    const mapped = mapHostPathToBackend(
-      "/my/project/media/batch/drawing.jpg",
-      "docker",
-      customConfig,
-    );
-
-    expect(mapped.backendPath).toBe("/app/media/batch/drawing.jpg");
-    expect(mapped.needsCopy).toBe(false);
-    expect(mapped.destinationHostPath).toBeUndefined();
-  });
-
-  it("treats a repo-relative ./media path as already staged", () => {
-    const mapped = mapHostPathToBackend(
-      "./media/e2e/batch/hand-mask.png",
-      "docker",
-      DEFAULT_PATH_CONFIG,
-    );
-
-    expect(mapped.backendPath).toBe("/app/media/e2e/batch/hand-mask.png");
-    expect(mapped.needsCopy).toBe(false);
-  });
-
-  it("passes a container path through untouched", () => {
-    const mapped = mapHostPathToBackend(
-      "/app/media/already/there.png",
-      "docker",
-    );
-
-    expect(mapped.backendPath).toBe("/app/media/already/there.png");
-    expect(mapped.needsCopy).toBe(false);
-  });
-
-  it("maps backend /app/output/... back to host output directory in Docker mode", () => {
-    const backendOut = "/app/output/sketch_001.mp4";
-    const hostOut = mapBackendPathToHost(backendOut, "docker", customConfig);
-
-    expect(hostOut).toBe("/my/project/output/sketch_001.mp4");
-  });
-
-  it("handles relative default path configuration properly", () => {
-    const backendOut = "/app/output/sketch_sample.mp4";
-    const hostOut = mapBackendPathToHost(
-      backendOut,
-      "docker",
-      DEFAULT_PATH_CONFIG,
-    );
-
-    expect(hostOut).toBe("./output/sketch_sample.mp4");
+  it("reads the base name of either separator style", () => {
+    expect(getBasename("/app/media/uploads/e2e/cat.png")).toBe("cat.png");
+    expect(getBasename("C:\\images\\cat.png")).toBe("cat.png");
+    expect(getBasename("cat.png")).toBe("cat.png");
   });
 });
 
-describe("Output directory mapping", () => {
-  const customConfig = {
-    projectRoot: "/my/project",
-    mediaSubdir: "media",
-    outputSubdir: "output",
-  };
-
-  it("leaves an empty value empty", () => {
-    expect(mapOutputDirToBackend("  ", "docker")).toBe("");
+describe("Backend path detection", () => {
+  it("accepts a container path in Docker mode", () => {
+    expect(isBackendPath("/app/media/uploads/x.png", "docker")).toBe(true);
+    expect(isBackendPath("/app", "docker")).toBe(true);
+    expect(isBackendPath("  /app/output/run.mp4  ", "docker")).toBe(true);
   });
 
-  it("passes a host path through in sidecar mode", () => {
-    expect(mapOutputDirToBackend("D:/renders", "sidecar")).toBe("D:/renders");
+  it("rejects anything the container cannot see", () => {
+    expect(isBackendPath("./media/x.png", "docker")).toBe(false);
+    expect(isBackendPath("D:/renders/x.png", "docker")).toBe(false);
+    expect(isBackendPath("C:\\images\\cat.png", "docker")).toBe(false);
+    // Only the whole `/app` segment counts: `/apple` is not the container root.
+    expect(isBackendPath("/apple/x.png", "docker")).toBe(false);
   });
 
-  it("rewrites the mounted ./output folder for the container", () => {
-    expect(mapOutputDirToBackend("./output/e2e", "docker")).toBe(
-      "/app/output/e2e",
-    );
-    expect(mapOutputDirToBackend("output/e2e/", "docker")).toBe(
-      "/app/output/e2e",
-    );
-    expect(
-      mapOutputDirToBackend("/my/project/output/runs", "docker", customConfig),
-    ).toBe("/app/output/runs");
-    expect(mapOutputDirToBackend("./output", "docker")).toBe("/app/output");
+  it("accepts every host path in sidecar mode", () => {
+    expect(isBackendPath("D:/renders/x.png", "sidecar")).toBe(true);
+    expect(isBackendPath("./media/x.png", "sidecar")).toBe(true);
+  });
+});
+
+describe("Input planning", () => {
+  it("sends nothing for an empty value", () => {
+    expect(planInputPath("   ", "docker")).toEqual({
+      path: "",
+      needsUpload: false,
+    });
   });
 
-  it("keeps a container path untouched", () => {
-    expect(mapOutputDirToBackend("/app/output/runs", "docker")).toBe(
-      "/app/output/runs",
-    );
+  it("passes a host path through untouched in sidecar mode", () => {
+    expect(planInputPath("D:/photos/cat.png", "sidecar")).toEqual({
+      path: "D:/photos/cat.png",
+      needsUpload: false,
+    });
   });
 
-  it("maps a folder beside the image, which is the default location", () => {
-    expect(mapOutputDirToBackend("./media/batch/runs", "docker")).toBe(
-      "/app/media/batch/runs",
-    );
-    expect(mapOutputDirToBackend("media", "docker")).toBe("/app/media");
+  it("flags a host path for upload in Docker mode", () => {
+    // A container has no host mounts, so a path inside the project is no more
+    // readable than one on another drive.
+    expect(planInputPath("./media/e2e/hand-mask.png", "docker")).toEqual({
+      path: "./media/e2e/hand-mask.png",
+      needsUpload: true,
+    });
+    expect(planInputPath("C:\\images\\cat.png", "docker").needsUpload).toBe(true);
   });
 
-  it("does not redirect a directory outside the mount", () => {
-    expect(mapOutputDirToBackend("D:/renders", "docker")).toBe("D:/renders");
+  it("sends an already-uploaded path as-is in Docker mode", () => {
+    expect(planInputPath("/app/media/uploads/e2e/cat.png", "docker")).toEqual({
+      path: "/app/media/uploads/e2e/cat.png",
+      needsUpload: false,
+    });
   });
 });
 
 describe("Output planning", () => {
-  const customConfig = {
-    projectRoot: "/my/project",
-    mediaSubdir: "media",
-    outputSubdir: "output",
-  };
-
   it("sends nothing when the folder is empty, which means 'beside the image'", () => {
     expect(planOutput("  ", "docker", false)).toEqual({});
     expect(planOutput("", "sidecar", true)).toEqual({});
-  });
-
-  it("hands the backend a folder inside either volume", () => {
-    expect(planOutput("./output/runs", "docker", false)).toEqual({
-      backendOutputDir: "/app/output/runs",
-    });
-    expect(planOutput("./media/runs", "docker", false)).toEqual({
-      backendOutputDir: "/app/media/runs",
-    });
-    expect(planOutput("/app/output/runs", "docker", true)).toEqual({
-      backendOutputDir: "/app/output/runs",
-    });
-    expect(planOutput("/my/project/output/runs", "docker", false, customConfig))
-      .toEqual({ backendOutputDir: "/app/output/runs" });
   });
 
   it("lets a native backend write any host folder directly", () => {
@@ -164,9 +91,19 @@ describe("Output planning", () => {
     });
   });
 
+  it("hands the container a folder the container owns", () => {
+    expect(planOutput("/app/output/runs", "docker", true)).toEqual({
+      backendOutputDir: "/app/output/runs",
+    });
+  });
+
   it("exports to a host folder the container cannot reach, in the desktop app", () => {
     expect(planOutput("D:/renders", "docker", true)).toEqual({
       exportDir: "D:/renders",
+      note: "exported",
+    });
+    expect(planOutput("./output/runs", "docker", true)).toEqual({
+      exportDir: "./output/runs",
       note: "exported",
     });
   });

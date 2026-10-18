@@ -41,7 +41,7 @@ describe("error mapping", () => {
     expect(docker.status).toBe(404);
     expect(docker.isPathVisibilityError).toBe(true);
     expect(docker.message).toContain("not visible to the backend");
-    expect(docker.message).toContain("mounted media directory");
+    expect(docker.message).toContain("only reads files that were uploaded");
     expect(docker.verbatim).toContain("Image not found");
 
     const sidecar = toAppError(error, "sidecar");

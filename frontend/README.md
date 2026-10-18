@@ -42,15 +42,18 @@ src/components/*      render only; they never call `fetch`
   `POST /api/v1/media`, `GET /api/v1/health`. Request/response DTOs are inferred
   from the contract, so a backend schema change that is not mirrored here fails
   `tsc`.
-- **Downloads** — `GET /api/v1/artifacts/download`, the one call whose body *is*
-  the result. `src/rpc/artifacts.ts` owns the URL it builds and reports failures
-  as the same `ORPCError` the contract raises, so `toAppError` still renders them
-  (a component never builds a URL, and no video is base64-encoded into JSON).
+- **Artifacts** — `src/rpc/artifacts.ts` owns the two calls whose body is not
+  JSON: `GET /api/v1/artifacts/download` (the body *is* the file — `disposition`
+  picks an opaque `attachment` for saving or a typed `inline` for previewing) and
+  `DELETE /api/v1/artifacts` (drop a staged upload or a produced file). It reports
+  failures as the same `ORPCError` the contract raises, so `toAppError` still
+  renders them (a component never builds a URL, and no video is base64-encoded
+  into JSON).
 - **SSE** — `GET /api/v1/events`, opened by `App.tsx`, which owns both
   subscriptions and passes derived state down:
   - `useLatestEvent()` — a **live query**: `data` is the newest event, plus
     `isLoading` / `error` / `refetch` for the connection itself. This drives the
-    header badge, the diagnostic line and reconnects.
+    header badge, the diagnostic line, the progress bar and reconnects.
   - `useEventStream()` — the same stream **accumulated**: `data` is every event
     of the session, because a live query keeps only the newest value. Measured
     against the real backend, two frames arriving in one read
@@ -72,63 +75,80 @@ state in Zustand (`stores/backend.ts` for mode and lifecycle commands,
 `stores/notifications.ts` for toasts and the event log). Nothing polls the
 server from a store.
 
+### Progress
+
+A run reports itself on the same stream it announces itself on. `sketch.progress`
+and `batch.progress` frames carry the raw `percent` (over the whole run), the
+group `label` being drawn, a `frame` / `total_frames` counter and — for a batch —
+the `item_index` / `item_total` / `item_name` of the image in flight.
+`useRunProgress` (`src/hooks/`) folds them into the bar's state, and it only
+listens while a run is in flight, so a finished run's `100%` can never flash onto
+the next one; `src/lib/progress.ts` holds the pure parts (monotonic clamp,
+label formatting, batch position) and `ProgressBar.tsx` draws an indeterminate
+bar until the first frame arrives.
+
 ## Execution modes and paths
 
-| Mode      | Who runs the backend                  | Paths in requests                       |
-| --------- | ------------------------------------- | --------------------------------------- |
-| `docker`  | container with `./media`, `./output`  | `/app/media/...`, `/app/output/...`     |
-| `sidecar` | `img2sketch-api` native host process  | host paths, passed through unchanged    |
+| Mode      | Who runs the backend                  | Paths in requests                        |
+| --------- | ------------------------------------- | ---------------------------------------- |
+| `docker`  | container, no host mounts             | `/app/media/...`, `/app/output/...` only |
+| `sidecar` | `img2sketch-api` native host process  | host paths, passed through unchanged     |
 
-`src/lib/paths.ts` holds the mapping; the views preview it under the input so
-the user can see what the backend will actually read. A path that is **already**
-inside `./media` keeps its subpath and needs no copy; a file from anywhere else
-is copied into the mounted media directory before the request, and a failed copy
-aborts with a toast instead of turning into a confusing `404`.
+The container mounts nothing, so it can only read what it was given and only
+write inside its own two directories. `src/lib/paths.ts` holds the rules the
+views preview under the input, so the user can see what will actually happen
+before submitting:
+
+- a path already inside `/app/media` or `/app/output` is passed through
+  unchanged — it is already something the backend owns;
+- **any other path is staged**: the file is read where the user picked it (the
+  desktop app reads the host path with `tauri-plugin-fs`, a browser has the
+  bytes) and uploaded to `POST /api/v1/media`, and the returned path is what the
+  request carries. A failed upload aborts with a toast instead of turning into a
+  confusing `404`.
 
 The **Output Folder** field sits in the main card, not behind the advanced
 section, because its default is the interesting part: leave it empty and every
-video is written next to its own image (the backend's own default). Typing a
-folder maps it the same way (`./output/runs` → `/app/output/runs`, and
-`./media/runs` → `/app/media/runs`), and the line under the field states where
-the videos will actually land before anything is submitted.
+video is written next to its own image (the backend's own default), which is
+also the only place the container can write without being asked for a specific
+folder.
 
-A folder **outside** the volumes is the one thing the container cannot write to.
+A folder the backend does not own is one the container cannot write to.
 `planOutput()` splits that case in two, and the field says which applies:
 
-- **Desktop app** — render beside the image, then copy the finished file into the
-  requested folder with `tauri-plugin-fs` (`exportDir`).
+- **Desktop app** — render beside the image, then write the finished file into
+  the requested folder with `tauri-plugin-fs` (`exportDir`).
 - **Browser** — render beside the image and offer the Download button, because a
   page cannot write to a host path on its own.
 
 Both the desktop app and a browser default to `docker`: it is the mode the
-service ships in, and it is what the API expects (the container only reads the
-two mounts). `sidecar` is one click away in Settings for running the
-`img2sketch-api` binary directly.
+service ships in, and it is what the API expects. `sidecar` is one click away in
+Settings for running the `img2sketch-api` binary directly.
 
 ### Picking files
 
 `Pick Image` / `Select Folder` open the platform's own dialog in both hosts, but
 they can only hand over different things:
 
-- **Desktop app** — the native dialog returns a **host path**, which the mapping
-  above takes from there.
+- **Desktop app** — the native dialog returns a **host path**; the app reads the
+  bytes with `tauri-plugin-fs` and uploads them (`readHostImageFile` /
+  `readHostImageDirectory` in `src/lib/tauri.ts`).
 - **Browser** — a `<input type="file">` returns the **bytes**, and a browser has
-  no way to name a host path. They are uploaded to `POST /api/v1/media`, which
-  writes them into `<APP_MEDIA_DIR>/uploads` (the mounted volume) and answers
-  with the path the backend can read. A folder pick becomes one bucket
-  (`uploads/<bucket>/`) so a batch run gets a real `input_dir`; `src/lib/media.ts`
-  owns the encoding, the bucket name and the size caps.
+  no way to name a host path. They go straight to `POST /api/v1/media`, which
+  writes them into `<APP_MEDIA_DIR>/uploads` and answers with the path the
+  backend can read. A folder pick becomes one bucket (`uploads/<bucket>/`) so a
+  batch run gets a real `input_dir`; `src/lib/media.ts` owns the encoding, the
+  bucket name and the size caps.
 
 Either way the form field ends up holding a path the backend can open — never an
 invented one. The same rule applies to the optional mask/hand images in the
 advanced section.
 
-### Downloading results
+### Downloading and deleting results
 
-The backend writes inside its volumes, so the video the API reports lives on a
-path a browser cannot read. Each result therefore has a **Download** button
-(single view and every batch row) that fetches the file from
-`GET /api/v1/artifacts/download` and hands it to the user:
+Every produced video lives inside the backend, so no host path can reach it. Each
+result therefore has a **Download** button (single view and every batch row) that
+fetches the file from `GET /api/v1/artifacts/download` and hands it to the user:
 
 - **Desktop app** — the native save dialog asks for a path, and Tauri writes the
   bytes there: the only way to target an arbitrary host folder.
@@ -136,6 +156,17 @@ path a browser cannot read. Each result therefore has a **Download** button
   context), so the folder is still chosen by the user; otherwise a plain download
   through the browser's own download UI. Cancelling either leaves the video
   untouched and shows nothing.
+
+The inline preview of a finished video is the same endpoint with
+`disposition=inline`, because the path points inside the container and a browser
+cannot read it directly.
+
+Files stay until the client says otherwise. **Delete** drops one produced video
+(`DELETE /api/v1/artifacts?path=...` on a result or a batch row), a batch view can
+drop every video a run created at once, and both views offer to remove the
+uploads this session staged — so a private source image does not have to be left
+behind. The container's directories are `tmpfs`, so anything left over is gone
+with the next restart anyway.
 
 ## Runtime configuration
 
@@ -153,22 +184,23 @@ path a browser cannot read. Each result therefore has a **Download** button
 
 - `src/**/*.test.ts` — Vitest, no DOM: type-level locks on the hooks (a wrapper
   that collapses oRPC generics to `unknown` compiles, so `tsc` is the assertion),
-  plus pure logic (`errors`, `notifications`, `paths`, `media`, `contract`,
-  `artifacts`, `toSseState`).
+  plus pure logic (`errors`, `notifications`, `paths`, `progress`, `media`,
+  `contract`, `artifacts`, `toSseState`).
 - `e2e/*.spec.ts` — Playwright against the real stack: the Docker backend
   (`docker compose up -d`, reused when it is already running) and a real
-  Chromium. It drives the UI, asserts on the MP4 files written on disk, and
-  checks the lifecycle events that arrived over SSE — both the accumulated log
-  and the live query's newest event. Inputs are two small images copied out of
-  `images/` into `media/e2e/` (and outputs go to `output/e2e/`), because the
-  container only sees the compose mounts; both folders are gitignored and the
-  suite never touches the rest of `media/` or `output/`. `e2e/upload.spec.ts`
-  additionally drives the real file dialog (Playwright's `filechooser`), so the
-  browser upload path is covered end to end; it wipes `media/uploads/` first,
-  which is where the app stages those picks. `e2e/download.spec.ts` captures a
-  real download (via the `stubSavePicker` helper in `e2e/helpers.ts`: the native
-  save dialog cannot be driven, so the spec exercises the browser fallback) and
-  checks the bytes on disk are an MP4. Run
+  Chromium. It drives the UI and checks the lifecycle events that arrived over
+  SSE — both the accumulated log and the live query's newest event — as well as
+  the progress frames. Inputs are the small images in `images/`, uploaded through
+  `POST /api/v1/media` by `e2e/fixtures.ts` into a **bucket of its own per run**
+  (`uploads/e2e-…`), so a spec always works with exactly the files it uploaded and
+  never with what an earlier run left behind; results are checked back through
+  `GET /api/v1/artifacts/download`, the way a client would. The container's
+  scratch space is `tmpfs`, so a restart clears every bucket.
+  `e2e/upload.spec.ts` additionally drives the real file dialog (Playwright's
+  `filechooser`), so the browser upload path is covered end to end.
+  `e2e/download.spec.ts` captures a real download (via the `stubSavePicker` helper
+  in `e2e/helpers.ts`: the native save dialog cannot be driven, so the spec
+  exercises the browser fallback) and checks the bytes are an MP4. Run
   `docker compose build` first when the backend changed — an already-running
   container is reused, so a stale image would otherwise be under test.
 
