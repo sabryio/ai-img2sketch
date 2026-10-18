@@ -28,7 +28,7 @@ or docker-compose**; the webview talks to it only over HTTP/SSE.
 ## Files to read first
 
 1. `docs/api.md` — endpoint contracts, schemas, SSE protocol, error mapping.
-2. `docs/tauri-integration.md` — startup strategies, lifecycle, volumes.
+2. `docs/tauri-integration.md` — startup strategies, lifecycle, path handling.
 3. `ARCHITECTURE.md` — only to understand *why* the backend behaves as it does.
 
 ## Architecture rules for the generated code
@@ -102,26 +102,41 @@ src/
     `hand_mask_path`.
   - `output_dir` visible but optional.
 - Submit → POST; disable the button and show the spinner state until the
-  response resolves (request is synchronous; may run seconds to minutes).
-- On success: show `output_path`, an embedded preview
-  (`<video src="asset:///<path converted to a Tauri asset URL>" controls>`), a
-  **Download** button (`GET /api/v1/artifacts/download?path=...`, saved through
-  the native dialog in Tauri and the browser's own save UI elsewhere), and a
-  fallback "Reveal in folder" button if the asset protocol is blocked.
+  response resolves (request is synchronous; may run seconds to minutes), plus a
+  **live progress bar** driven by the `sketch.progress` frames on the event
+  stream: raw `percent` over the whole run, the group `label`, and
+  `frame` / `total_frames`. Reset it when a run starts so a finished run's 100%
+  can never flash on the next one.
+- On success: show `output_path`, an embedded preview — the file lives inside
+  the backend, so stream it with
+  `GET /api/v1/artifacts/download?path=...&disposition=inline` rather than trying
+  to read the path — a **Download** button (saved through the native dialog in
+  Tauri and the browser's own save UI elsewhere), and a **Delete** button
+  (`DELETE /api/v1/artifacts?path=...`) so keeping the file or dropping it is the
+  user's decision. Disable both once it has been deleted.
 - **Path mapping must be explicit** in a `lib/paths.ts` module:
   - sidecar mode → request paths are plain local paths as-is;
-  - Docker mode → the backend only sees mounted paths (+ `/app/output`).
-    When Docker mode is active, copy picked files into the config's media
-    directory (configurable; default `./media`) before requesting, and map
-    returned `/app/output/...` paths back to `<project-root>/output`. Surface
-    the active mode in the UI so the user understands where files must live.
+  - Docker mode → the backend has no host mounts: it only reads files that were
+    uploaded and only writes inside its own directories. A host path is
+    therefore something to *read and upload* (`POST /api/v1/media`, with
+    `tauri-plugin-fs` supplying the bytes in the desktop app), and the path the
+    API answers with is what the request carries. A typed host output folder
+    cannot be written by the container: render beside the image, then hand the
+    fetched video to that folder (the desktop app writes it; a browser
+    downloads it). Surface the active mode in the UI so the user understands
+    where files have to live.
+- Offer to remove what this session uploaded (`DELETE /api/v1/artifacts` on the
+  staged paths), so a private source image does not have to be left behind.
 
 ### 4. Batch screen (`POST /api/v1/sketches/batch`)
-- Folder picker for `input_dir`, same options panel, same path-mapping rules.
+- Folder picker for `input_dir`, same options panel, same path-mapping rules,
+  same live progress bar with the added position: `item_index` / `item_total` /
+  `item_name` from `batch.progress` ("image 2 of 5 · b.png").
 - Result: a table of `items` (`image`, `output_path`, `error`), highlighting
   failed rows but not aborting; summary line from the `batch.completed` event
   payload (`succeeded` / `failed` counts).
-- Allow opening a generated video from its row.
+- Allow previewing, downloading and deleting each produced video from its row,
+  and offer one action that deletes every video the run left on the backend.
 
 ### 5. Errors
 - Map every failure the way the backend does (see `docs/api.md`):

@@ -52,8 +52,9 @@ docker compose up -d
 ```
 
 The compose stack binds `127.0.0.1:8000` (localhost only, the webview is on the
-same machine) and reports health at `/api/v1/health`. Files and generated
-videos cross the container through the documented volumes.
+same machine) and reports health at `/api/v1/health`. Files travel over HTTP:
+uploads go in with `POST /api/v1/media`, results come back out with
+`GET /api/v1/artifacts/download`.
 
 ### Option C: Local development (no Docker, no packaging)
 
@@ -69,9 +70,10 @@ uv run img2sketch-api        # or: uv run uvicorn ai_img2sketch.presentation.api
 | `/api/v1/health` | GET | Liveness probe (`{"status": "ok"}`) |
 | `/api/v1/media` | POST | Stage a client-uploaded image so the backend can read it |
 | `/api/v1/artifacts/download` | GET | Fetch a produced video by the path the backend reported |
+| `/api/v1/artifacts` | DELETE | Drop a staged upload or a produced video |
 | `/api/v1/sketches` | POST | Generate one sketch video from an image |
 | `/api/v1/sketches/batch` | POST | Generate one video per image in a directory |
-| `/api/v1/events` | GET | SSE stream of `sketch.*` / `batch.*` lifecycle events |
+| `/api/v1/events` | GET | SSE stream of `sketch.*` / `batch.*` lifecycle and progress events |
 
 ### Request example
 
@@ -134,17 +136,25 @@ the CLI and the Tauri app loses nothing.
 | `422` | Valid JSON, unusable content (unreadable image, folder without supported images, bad option ranges) |
 | `500` | Unexpected failure (message surfaced verbatim for local debugging) |
 
-## Volumes: paths in requests must exist inside the container
+## Paths: requests must reference files the backend owns
 
-The compose file mounts `./media` → `/app/media` (client files) and
-`./output` → `/app/output` (generated videos). Reference those container paths
-in `image_path` / `input_dir` / `output_dir`.
+The compose stack mounts **nothing** from the host. `POST /api/v1/media` copies
+the bytes into `<APP_MEDIA_DIR>/uploads` (in the container: `/app/media/uploads`)
+and answers with the path they landed on; that path is what
+`image_path` / `input_dir` / object-mask and hand-image fields must carry.
 
-A folder outside those two volumes cannot be written by the container. The
-desktop shell handles that in two steps: it renders beside the image (no
-`output_dir` sent) and then copies the produced file into the requested host
-folder with `tauri-plugin-fs` — or saves it through the native save dialog when
-the user asks for it. See "Picking files" in `frontend/README.md`.
+Nothing else is readable, so a typed host path is uploaded first: the desktop
+app reads the picked file with `tauri-plugin-fs` and sends it, a browser sends
+the bytes it was handed. See "Picking files" in `frontend/README.md`.
+
+The same applies in the other direction. A folder the container does not own
+cannot be written by it, so the desktop shell renders beside the image (no
+`output_dir` sent), fetches the video from
+`GET /api/v1/artifacts/download`, and writes it into the requested host folder
+with `tauri-plugin-fs` — or saves it through the native save dialog when the user
+asks for one file. Produced files can be dropped again with
+`DELETE /api/v1/artifacts`, and the container's directories are `tmpfs`, so a
+restart clears whatever is left.
 
 ## SSE Event Streaming
 
@@ -164,9 +174,12 @@ the user asks for it. See "Picking files" in `frontend/README.md`.
    data: {"event": "sketch.completed", "image": "/app/media/a.jpg", "output_path": "/app/output/a.mp4"}
    ```
 
-   Discriminants: `sketch.started` / `sketch.completed` / `sketch.failed` and
-   `batch.started` / `batch.completed` / `batch.failed` — the same names and
-   payload fields the REST responses use.
+   Discriminants: `sketch.started` / `sketch.progress` / `sketch.completed` /
+   `sketch.failed` and `batch.started` / `batch.progress` / `batch.completed` /
+   `batch.failed` — the same names and payload fields the REST responses use.
+   The `*.progress` frames carry `percent` (whole run), an optional `label`, a
+   frame counter and, for a batch, the `item_index` / `item_total` / `item_name`
+   of the image being drawn.
 3. **Keep-alives** — during silence (>15 s) the bus keep-alive becomes an anonymous
    `: \n\n` comment, so proxies and the webview do not time the stream out.
 4. **Close event** — on backend shutdown: `event: close`, then the stream ends.
@@ -269,8 +282,8 @@ in the UI:
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
-| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; the image sets `/app/media`, the mounted volume |
-| `APP_OUTPUT_DIR` | `output` | Directory `output_dir` videos are written to and may be downloaded from; the image sets `/app/output`, the mounted volume |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; the image sets `/app/media` and mounts it as `tmpfs` |
+| `APP_OUTPUT_DIR` | `output` | Directory `output_dir` videos are written to and may be downloaded from; the image sets `/app/output`, also `tmpfs` |
 | `APP_CORS_ORIGINS` | Tauri origins | JSON list of allowed CORS origins |
 
 ## Health Checks

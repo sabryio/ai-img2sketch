@@ -305,23 +305,36 @@ uv run img2sketch-api
 # Health probe
 curl http://localhost:8000/api/v1/health
 
+# Stage an image so the backend can read it (it has no host mounts);
+# the response reports the path the next call should use
+curl -X POST http://localhost:8000/api/v1/media \
+  -H "Content-Type: application/json" \
+  -d '{"filename": "photo.jpg", "content_base64": "'"$(base64 -w0 photo.jpg)"'"}'
+
 # Generate one sketch video
 curl -X POST http://localhost:8000/api/v1/sketches \
   -H "Content-Type: application/json" \
-  -d '{"image_path": "/app/media/photo.jpg", "output_dir": "/app/output"}'
+  -d '{"image_path": "/app/media/uploads/photo-3f9c1a2b.jpg", "output_dir": "/app/output"}'
 
-# Stream lifecycle events (initial ack -> id'd event frames -> close)
+# Stream lifecycle and progress events (initial ack -> id'd event frames -> close)
 curl -N http://localhost:8000/api/v1/events
 
 # Fetch a produced video back (the path the sketch call reported)
 curl -o sketch.mp4 \
   'http://localhost:8000/api/v1/artifacts/download?path=/app/output/sketch.mp4'
+
+# Or drop it again (uploads too) — nothing else cleans the server up
+curl -X DELETE \
+  'http://localhost:8000/api/v1/artifacts?path=/app/output/sketch.mp4'
 ```
+
+The API keeps nothing on its own: both its directories are mounted as `tmpfs`,
+so a restart clears them, and a client that wants a file gone sooner deletes it.
 
 - `docs/api.md` — complete API reference for humans and agents: schemas,
   ranges, SSE protocol, error mapping, concurrency notes.
 - `docs/tauri-integration.md` — start/locate/communicate guide for the Tauri
-  shell (sidecar vs Docker, lifecycle, volumes, env vars).
+  shell (sidecar vs Docker, lifecycle, path handling, env vars).
 - `docs/frontend-ai-prompt.md` — a ready-to-paste prompt for an AI coding
   agent to generate the Tauri frontend against the API.
 
@@ -344,12 +357,15 @@ ai-img2sketch/
 │   ├── application/               # Application layer
 │   │   ├── ports/                # Interfaces the app depends on
 │   │   │   ├── artifact_reader.py
+│   │   │   ├── artifact_remover.py
 │   │   │   ├── blob_store.py
+│   │   │   ├── event_publisher.py
 │   │   │   ├── image_loader.py
 │   │   │   ├── hand_loader.py
 │   │   │   ├── image_preprocessor.py
 │   │   │   ├── image_scanner.py
 │   │   │   ├── object_mask_loader.py
+│   │   │   ├── progress_reporter.py
 │   │   │   ├── sketch_video_generator.py
 │   │   │   └── video_writer.py
 │   │   ├── services/             # Pure, stateless business logic
@@ -371,10 +387,12 @@ ai-img2sketch/
 │   │   └── video/
 │   │       └── video_writer.py           # OpenCVVideoWriter
 │   │   ├── events/
-│   │   │   └── async_event_bus.py        # In-process pub/sub backing SSE
+│   │   │   ├── async_event_bus.py        # In-process pub/sub backing SSE
+│   │   │   └── progress_reporter.py      # EventProgressReporter: render thread -> event loop
 │   │   ├── storage/
-│   │   │   ├── artifact_reader.py  # VolumeArtifactReader: serves produced files
-│   │   │   └── media_store.py    # MediaStore: stages client uploads in the volume
+│   │   │   ├── volume_artifacts.py  # VolumeArtifacts: serves + deletes produced files
+│   │   │   ├── volume_paths.py    # Containment/resolution shared by both
+│   │   │   └── media_store.py    # MediaStore: stages client uploads on disk
 │   │   ├── config/
 │   │   │   └── settings.py        # ApiSettings (APP_* environment variables)
 │   │   └── tauri/

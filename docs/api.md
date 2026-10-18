@@ -8,12 +8,16 @@ is designed for the local machine (e.g. the Tauri webview), not the open
 internet.
 
 - **Content type**: requests and responses are `application/json`, except
-  `GET /api/v1/events` which streams `text/event-stream`.
+  `GET /api/v1/events` which streams `text/event-stream` and
+  `GET /api/v1/artifacts/download` which serves the file itself.
 - **Validation**: unknown fields are rejected (`422`), field ranges are
   enforced by the schemas below.
 - **Single worker by design**: the event bus is in-process, so SSE subscribers
   and request handlers must share one event loop. Scale by running more
   stacks behind a load balancer, not with `--workers`.
+- **Nothing is kept by default**: the server owns two scratch directories and
+  no host mounts. A client uploads the file it wants processed, downloads the
+  result, and can delete either afterwards with `DELETE /api/v1/artifacts`.
 
 ---
 
@@ -25,6 +29,8 @@ internet.
 | `/media` | POST | Stage an uploaded image so the backend can read it |
 | `/sketches` | POST | Generate one sketch video from an image |
 | `/sketches/batch` | POST | Generate one video per image in a directory |
+| `/artifacts/download` | GET | Fetch a produced file by the path the backend reported |
+| `/artifacts` | DELETE | Drop a staged upload or a produced file |
 | `/events` | GET | Server-Sent-Events stream of lifecycle events |
 
 The handlers run generation in a worker thread (OpenCV is blocking), so the
@@ -126,11 +132,11 @@ batch: partial failures still return `200` — only whole-request failures
 
 Stage an image the client picked, and get back a path the backend can read.
 
-The desktop shell does not need this: it hands over a host path and the compose
-mounts make it readable. A **browser** does — the picked file only exists as
-bytes, and the backend has no access to the client's filesystem. Uploads land
-under `<APP_MEDIA_DIR>/uploads` (in the container: `/app/media/uploads`), which
-is the mounted volume, so the returned path is usable as-is.
+A container has no host mounts, so this is how **every** input reaches the
+backend: the file is read where the user picked it (a browser holds the bytes,
+the desktop app reads the host path) and the API answers with a path inside its
+own media directory. Uploads land under `<APP_MEDIA_DIR>/uploads` (in the
+container: `/app/media/uploads`), so the returned path is usable as-is.
 
 ### Request body — `StoreMediaRequest`
 
@@ -159,33 +165,60 @@ The path is absolute **as the server sees it**; use it verbatim as
 Fetch the bytes of a file the backend produced — the read-side counterpart of
 `POST /media`.
 
-Videos are rendered inside the backend's volumes (`<APP_MEDIA_DIR>` when they
-are written beside their image, `<APP_OUTPUT_DIR>` when `output_dir` asked for a
-folder), and a browser cannot read those paths. This endpoint hands the file
-over so the client can save it wherever the user wants: the desktop app writes
-it to a path from a native save dialog, a browser to its own download location.
+Videos are rendered inside the backend's own directories (`<APP_MEDIA_DIR>` when
+they are written beside their image, `<APP_OUTPUT_DIR>` when `output_dir` asked
+for a folder), and a client cannot read those paths. This endpoint hands the file
+over so it can be saved wherever the user wants: the desktop app writes it to a
+path from a native save dialog, a browser to its own download location.
 
 | Query | Type | Required | Notes |
 |---|---|---|---|
 | `path` | string | yes | Path **as a previous response reported it** (e.g. `SketchResult.output_path`) |
+| `disposition` | `attachment` \| `inline` | no (`attachment`) | `attachment` saves the file under its name; `inline` streams it with its real media type, which is what a `<video>` preview needs |
 
 ```bash
 curl -s -o sketch.mp4 \
   'http://localhost:8000/api/v1/artifacts/download?path=/app/output/sketch.mp4'
 ```
 
-Responds with the file itself (`application/octet-stream`,
-`Content-Disposition: attachment; filename="<name>"`) plus `Content-Length`,
-`Last-Modified` and `ETag`. Reads are confined to `<APP_MEDIA_DIR>` and
+Responds with the file itself plus `Content-Length`, `Last-Modified` and `ETag`.
+An `attachment` is deliberately opaque (`application/octet-stream`); an `inline`
+request is typed from the file's extension (`video/mp4`), because a browser will
+not play a video served as octets. Reads are confined to `<APP_MEDIA_DIR>` and
 `<APP_OUTPUT_DIR>`: containment is checked on the *resolved* path, so a symlink
-or a `..` that escapes a volume is refused like any other outside path.
+or a `..` that escapes a served directory is refused like any other outside path.
+
+---
+
+## `DELETE /api/v1/artifacts`
+
+Drop a file the API staged or produced, so the client decides what stays.
+
+`path` is the only parameter, and it is the path a previous response reported
+(`StoredMedia.path`, `SketchResult.output_path`, `BatchItem.output_path`).
+
+```bash
+curl -X DELETE \
+  'http://localhost:8000/api/v1/artifacts?path=/app/media/uploads/portrait-3f9c1a2b.png'
+```
+
+Responds `204 No Content`, whether or not the file was still there: deleting is
+idempotent, so a retry after a dropped response is safe. The same containment rule
+as the download applies — an empty path, a directory (e.g. `<APP_MEDIA_DIR>`
+itself) or a path outside the served directories is a `422`.
+
+Nothing has to be cleaned up for the API to stay honest: the compose stack mounts
+both directories as `tmpfs`, so everything in them is gone when the container
+restarts. Deleting is for the client that wants a file gone *now*.
 
 ---
 
 ## Error mapping
 
 Shared by the request/response endpoints and mirrored in the SSE failure events.
-For the download above, only the `404` and `422` rows apply.
+For the artifact endpoints, only the `404` (nothing at that path) and `422`
+(empty, a directory, or outside the served directories) rows apply — a delete
+that finds nothing is a `204`, not a `404`.
 
 | Status | Trigger | Example detail |
 |---|---|---|
@@ -241,14 +274,35 @@ Every payload carries `"event": "<name>"` plus these fields:
 | Event | When | `data` |
 |---|---|---|
 | `sketch.started` | single request accepted, before rendering | `{"event", "image", "output_path"}` |
+| `sketch.progress` | while rendering, throttled to ~5% steps (plus the last frame) | `{"event", "image", "output_path", "percent", "label?", "frame?", "total_frames?"}` |
 | `sketch.completed` | video written | `{"event", "image", "output_path"}` |
 | `sketch.failed` | rendering failed | `{"event", "image", "output_path", "error"}` |
 | `batch.started` | batch request accepted | `{"event", "input_dir"}` |
+| `batch.progress` | while the batch runs | `{"event", "input_dir", "percent", "label?", "frame?", "total_frames?", "item_index?", "item_total?", "item_name?"}` |
 | `batch.completed` | batch finished | `{"event", "input_dir", "succeeded", "failed"}` (ints) |
 | `batch.failed` | batch failed before/while processing | `{"event", "input_dir", "error"}` |
 
 `image` / `output_path` fields carry the same strings as the corresponding
 REST responses (`404`/`422` messages mirror the `error` values).
+
+### Progress frames
+
+A progress frame repeats the identifying fields of its lifecycle events
+(`image`/`output_path`, or `input_dir`), so a client can attribute it to the run
+that asked for it without keeping state.
+
+- `percent` is 0–100 over the **whole** run (for a batch: all images, not the
+  current one). Frames are throttled — the engine reports at ~5% steps and always
+  reports its final frame — so a client draws a smooth bar instead of one event
+  per drawing stroke.
+- `label` names what is being drawn (`"image"`, an object name, `"background"`,
+  or `"final image"`); `frame` / `total_frames` count written frames.
+- A batch adds `item_index` (1-based) / `item_total` / `item_name`, which is how
+  a client shows "image 2 of 5 · b.png".
+
+Progress is published from the render thread and pushed onto the event loop, so
+it interleaves correctly with the lifecycle frames. Frames for a run that has
+already finished are never sent, and a run that fails simply stops reporting.
 
 ### Frontend usage
 
@@ -282,8 +336,8 @@ Anonymous comments (`: \n\n`) are handled by the browser and never dispatched.
 | `APP_HOST` | `0.0.0.0` | Bind host |
 | `APP_PORT` | `8000` | Bind port (1–65535) |
 | `APP_LOG_LEVEL` | `info` | uvicorn log level |
-| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; must be the path the server can read (the container sets `/app/media`) |
-| `APP_OUTPUT_DIR` | `output` | Directory the server writes `output_dir` videos into and may serve back from (the container sets `/app/output`) |
+| `APP_MEDIA_DIR` | `media` | Directory that receives client uploads (`POST /media`) and holds videos written beside their image; must be the path the server can read (the container sets `/app/media`, a `tmpfs` that dies with the container) |
+| `APP_OUTPUT_DIR` | `output` | Directory the server writes `output_dir` videos into and may serve back from (the container sets `/app/output`, also `tmpfs`) |
 | `APP_CORS_ORIGINS` | `["http://localhost:1420", "http://localhost:3000", "http://127.0.0.1:3000", "http://tauri.localhost", "tauri://localhost"]` | JSON list of allowed CORS origins |
 
 CORS allows credentials and all methods/headers for the listed origins; the
@@ -299,6 +353,7 @@ default list covers the Tauri dev server, the `frontend/` Vite dev server
   is in flight.
 - Events published while **no** SSE client is attached are not replayed —
   subscribe before triggering long operations.
-- Requests against paths that do not exist *inside the container* fail with
-  `404`; see `docs/tauri-integration.md` for the volume mapping
-  (`./media → /app/media`, `./output → /app/output`).
+- Paths are the server's own: an input has to be uploaded first (`POST /media`)
+  and a produced file fetched back (`GET /artifacts/download`), because the API
+  has no host mounts. See `docs/tauri-integration.md` for the client side of
+  that flow.

@@ -64,7 +64,10 @@ on abstractions it defines itself.
 - **VideoWriter** / **VideoWriterFactory**: write frames
 - **BlobStore**: stage bytes a client uploaded and report the path they landed on
 - **ArtifactReader**: resolve a produced file to a readable path, and nothing
-  outside the volumes the API serves
+  outside the directories the API serves
+- **ArtifactRemover**: delete a staged or produced file, idempotently
+- **ProgressReporter**: receive render progress without knowing about transports
+  (the SSE implementation hops from the render thread back onto the event loop)
 
 These are `typing.Protocol` definitions. The application never imports
 infrastructure; infrastructure imports the ports.
@@ -109,10 +112,14 @@ or the filesystem lives here.
   `EventStream` (read side) — the in-process bus backing the SSE transport
 - **MediaStore** (in `storage/`) implements `BlobStore` — sanitizes an upload's
   name, makes it unique and writes it under `<media root>/uploads`, which is the
-  volume the container mounts, so the reported path is readable as-is
-- **VolumeArtifactReader** (in `storage/`) implements `ArtifactReader` — resolves
-  a requested path against the resolved media and output roots, so downloads can
-  only ever hand back files the API itself could have produced
+  directory the container owns, so the reported path is readable as-is
+- **VolumeArtifacts** (in `storage/`) implements `ArtifactReader` *and*
+  `ArtifactRemover` — resolves a requested path against the resolved media and
+  output roots (and checks containment on the resolved path), so the API can only
+  ever hand back or delete files it could have produced itself
+- **EventProgressReporter** (in `events/`) implements `ProgressReporter` — pushes
+  frames from the render thread onto the event loop (`call_soon_threadsafe`),
+  never raising into the render that is reporting
 - **`sse/`**: `ORPCSseStream` — framework-agnostic encoder for the
   oRPC-compatible wire format (comments/keep-alives, `id`/`data` message
   frames, `close`/`error` frames); see `docs/orpc-sse-wire-format.md`
@@ -202,12 +209,20 @@ GenerateVideosFromDirectoryUseCase  (folder)
 FastAPI (HTTP interface adapters)
     POST /api/v1/media          → decodes the client's upload → BlobStore → backend-readable path
     POST /api/v1/sketches      → parses DTO → VideoConfig → use case (in a worker thread)
-                                 → publishes sketch.* events through EventPublisher
+                                 → publishes sketch.* events + sketch.progress frames
     POST /api/v1/sketches/batch → BatchSummary → BatchSketchResult
+                                 → publishes batch.* events + batch.progress frames
     GET  /api/v1/artifacts/download → ArtifactReader → the produced file's bytes
+    DELETE /api/v1/artifacts    → ArtifactRemover → the file is gone (204)
     GET  /api/v1/events        → EventStream.subscribe() → SSE frames
     (parallel transport, same use cases — no business logic in the HTTP layer)
 ```
+
+Nothing persists by default: the compose stack mounts both directories as
+`tmpfs`, so a restart wipes them, and a client that wants a file gone sooner
+calls `DELETE /api/v1/artifacts`. Downloads are the only way a produced file
+reaches the host, which is why the reader and the remover share one containment
+rule.
 
 ## Type Safety
 
