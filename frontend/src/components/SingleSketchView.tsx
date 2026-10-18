@@ -16,7 +16,11 @@ import {
 import { useElapsed, useGenerateSketch } from "../hooks";
 import type { SketchOptions } from "../rpc/contract";
 import { toAppError } from "../lib/errors";
-import { mapBackendPathToHost, mapHostPathToBackend } from "../lib/paths";
+import {
+  mapBackendPathToHost,
+  mapHostPathToBackend,
+  mapOutputDirToBackend,
+} from "../lib/paths";
 import {
   convertPathToAssetUrl,
   copyHostFile,
@@ -151,7 +155,9 @@ export const SingleSketchView: React.FC<SingleSketchViewProps> = ({ ready }) => 
     try {
       await sketch.mutateAsync({
         image_path: backendImagePath,
-        output_dir: outputDir.trim() ? outputDir.trim() : undefined,
+        output_dir: outputDir.trim()
+          ? mapOutputDirToBackend(outputDir.trim(), mode, pathConfig)
+          : undefined,
         object_mask_path: objectMaskPath.trim()
           ? objectMaskPath.trim()
           : undefined,

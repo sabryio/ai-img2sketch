@@ -3,16 +3,20 @@ import { defineConfig } from "@playwright/test";
 /**
  * End-to-end suite for the desktop app, run against the real stack:
  *
+ * - the Docker backend (`docker compose up -d`, health on 127.0.0.1:8000)
  * - the Vite dev server (`bun run dev`, port 3000)
- * - the FastAPI service on 127.0.0.1:8000, started from the repo root
  *
- * Nothing is mocked: the specs drive the UI, the UI calls the API over HTTP and
- * consumes the SSE stream, and the specs verify the produced files on disk.
- * Inputs are tiny images (`e2e/fixtures.ts`), so a full render takes well under
- * a second and the suite stays quick.
+ * Nothing is mocked: the specs drive the UI, the UI maps host paths into the
+ * container's mounted volumes, the API renders real MP4s, and the specs verify
+ * those files on disk. That is also the mode the app starts in, so the suite
+ * exercises what a user actually gets.
  *
- * Both servers are reused when already running, so a dev session and a test run
- * can share them.
+ * Fixtures live inside `media/` and `output/` (the compose mounts) so the
+ * container can see them — see `e2e/fixtures.ts`.
+ *
+ * Both servers are reused when already running, so a long-lived Docker stack is
+ * left exactly as it is. Rebuild it first (`docker compose build`) after a
+ * backend change, or the specs would be testing a stale image.
  */
 export default defineConfig({
   testDir: "./e2e",
@@ -37,12 +41,11 @@ export default defineConfig({
   },
   webServer: [
     {
-      command:
-        "uv run uvicorn ai_img2sketch.presentation.api.app:app --host 127.0.0.1 --port 8000",
+      command: "docker compose up -d",
       cwd: "..",
       url: "http://127.0.0.1:8000/api/v1/health",
       reuseExistingServer: true,
-      timeout: 120_000,
+      timeout: 180_000,
     },
     {
       command: "bun run dev",

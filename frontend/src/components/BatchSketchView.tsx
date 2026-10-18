@@ -15,7 +15,11 @@ import {
 import { useElapsed, useGenerateBatch } from "../hooks";
 import type { BatchItem, SketchOptions } from "../rpc/contract";
 import { toAppError } from "../lib/errors";
-import { mapBackendPathToHost, mapHostPathToBackend } from "../lib/paths";
+import {
+  mapBackendPathToHost,
+  mapHostPathToBackend,
+  mapOutputDirToBackend,
+} from "../lib/paths";
 import { convertPathToAssetUrl, openDirectoryDialog } from "../lib/tauri";
 import { useBackendStore } from "../stores/backend";
 import { useNotificationsStore } from "../stores/notifications";
@@ -120,7 +124,9 @@ export const BatchSketchView: React.FC<BatchSketchViewProps> = ({ ready }) => {
     try {
       await batch.mutateAsync({
         input_dir: backendInputDir,
-        output_dir: outputDir.trim() ? outputDir.trim() : undefined,
+        output_dir: outputDir.trim()
+          ? mapOutputDirToBackend(outputDir.trim(), mode, pathConfig)
+          : undefined,
         config,
       });
     } catch {

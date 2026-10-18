@@ -43,11 +43,13 @@ interface BackendStore {
 }
 
 /**
- * Docker is the packaged way to run the service, but a browser (dev server or
- * Playwright) is always talking to a process on the same host, so the
- * pass-through mode is the correct default there.
+ * Docker is how the service ships: one image, and the container's `./media` /
+ * `./output` mounts are the only paths it can read and write. The desktop build
+ * and a browser (dev server or Playwright) therefore both start in Docker mode;
+ * the native sidecar stays one click away in Settings for people running the
+ * `img2sketch-api` binary directly.
  */
-const DEFAULT_MODE: BackendMode = isTauriEnvironment() ? "docker" : "sidecar";
+const DEFAULT_MODE: BackendMode = "docker";
 
 export const useBackendStore = create<BackendStore>((set, get) => ({
   mode: DEFAULT_MODE,

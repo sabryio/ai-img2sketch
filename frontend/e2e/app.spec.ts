@@ -14,9 +14,9 @@ test.beforeAll(() => {
 test("clears the startup gate and opens the event stream", async ({ page }) => {
   await openWorkspace(page);
 
-  // A browser talks to a process on the same host: pass-through paths are the
-  // correct default there (the desktop app defaults to Docker instead).
-  await expect(page.getByText("sidecar Mode")).toBeVisible();
+  // Docker is the mode the app ships with; the compose stack is what the
+  // harness starts (or reuses) on 127.0.0.1:8000.
+  await expect(page.getByText("docker Mode")).toBeVisible();
 
   // The stream is up but has not seen an event yet: oRPC filters the backend's
   // keep-alive comments, so "connecting" is the honest state here.

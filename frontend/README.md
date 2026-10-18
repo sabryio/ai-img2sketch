@@ -15,14 +15,16 @@ bun run test       # vitest run (unit)
 bun run test:e2e   # playwright test (real browser + real backend)
 ```
 
-Start the backend first (`bun run test:e2e` starts its own if none is running):
+The app expects the Docker backend, so start the stack first — `bun run
+test:e2e` starts it too if nothing is listening:
 
 ```bash
 # from the repository root
-uv run uvicorn ai_img2sketch.presentation.api.app:app --host 127.0.0.1 --port 8000
-# or, packaged:
-docker compose up -d
+docker compose up -d      # build first: docker compose build
 ```
+
+For the native path, run `uv run uvicorn ai_img2sketch.presentation.api.app:app
+--host 127.0.0.1 --port 8000` and switch Settings → execution mode to `sidecar`.
 
 ## How it talks to the backend
 
@@ -73,12 +75,17 @@ server from a store.
 | `sidecar` | `img2sketch-api` native host process  | host paths, passed through unchanged    |
 
 `src/lib/paths.ts` holds the mapping; the views preview it under the input so
-the user can see what the backend will actually read. In Docker mode a picked
-host file is copied into the mounted media directory before the request, and a
-failed copy aborts with a toast instead of turning into a confusing `404`.
+the user can see what the backend will actually read. A path that is **already**
+inside `./media` keeps its subpath and needs no copy; a file from anywhere else
+is copied into the mounted media directory before the request, and a failed copy
+aborts with a toast instead of turning into a confusing `404`. `output_dir` goes
+through the same mapping, so `./output/runs` reaches the container as
+`/app/output/runs`.
 
-The desktop app defaults to `docker`; a browser defaults to `sidecar`, because a
-browser always talks to a process on the same host.
+Both the desktop app and a browser default to `docker`: it is the mode the
+service ships in, and it is what the API expects (the container only reads the
+two mounts). `sidecar` is one click away in Settings for running the
+`img2sketch-api` binary directly.
 
 ## Runtime configuration
 
@@ -96,12 +103,16 @@ browser always talks to a process on the same host.
 - `src/**/*.test.ts` — Vitest, no DOM: type-level locks on the hooks (a wrapper
   that collapses oRPC generics to `unknown` compiles, so `tsc` is the assertion),
   plus pure logic (`errors`, `notifications`, `paths`, `contract`, `toSseState`).
-- `e2e/*.spec.ts` — Playwright against a real backend and a real Chromium. It
-  drives the UI, asserts on the MP4 files written on disk, and checks the
-  lifecycle events that arrived over SSE — both the accumulated log and the live
-  query's newest event. Inputs are two small images copied out of `images/` into
-  a temp workspace (`e2e/fixtures.ts`), so no binaries are committed and renders
-  stay under a second.
+- `e2e/*.spec.ts` — Playwright against the real stack: the Docker backend
+  (`docker compose up -d`, reused when it is already running) and a real
+  Chromium. It drives the UI, asserts on the MP4 files written on disk, and
+  checks the lifecycle events that arrived over SSE — both the accumulated log
+  and the live query's newest event. Inputs are two small images copied out of
+  `images/` into `media/e2e/` (and outputs go to `output/e2e/`), because the
+  container only sees the compose mounts; both folders are gitignored and the
+  suite never touches the rest of `media/` or `output/`. Run
+  `docker compose build` first when the backend changed — an already-running
+  container is reused, so a stale image would otherwise be under test.
 
 ```bash
 bun run test:e2e                 # whole suite
