@@ -101,12 +101,12 @@ Python engine; the manifest is committed.
 
 **Goal.** The algorithms exist in Rust, tested, with no I/O.
 
-**Work.** **Largely done:** the workspace, `img2sketch-core`'s domain types (dimensions with the
+**Work.** **Done.** The workspace and `img2sketch-core`'s domain types (dimensions with the
 even-for-encoder rule and common divisors, frames with odd-side padding, video config with validated
-ranges, encoder settings) and the dimension adjuster are in [`rust/`](rust/README.md). What remains
-are the rest of the pure services: grid calculator, drawing path calculator, drawing planner, drawing
-speed calculator, hand overlay, video path resolver — each with its ported behavioural tests. No
-async, no files, no OpenCV.
+ranges, encoder settings), the dimension adjuster, and the rest of the pure services — grid
+calculator, drawing path calculator, drawing planner, drawing speed calculator, hand overlay, video
+path resolver — are in [`rust/`](rust/README.md), with the behavioural tests ported alongside them.
+No async, no files, no OpenCV.
 
 **Gate.** `cargo test` green on the ported algorithm tests; the pure crate has no dependency on I/O
 or async runtimes.
@@ -117,14 +117,18 @@ or async runtimes.
 
 **Goal.** The sketch is the same picture.
 
-**Work.** The image adapters: loaders for source images, hand image and mask, object masks, the
-directory scanner, the preprocessor (resize, greyscale, adaptive threshold, BGR assembly), and the
-preview stills. The Gaussian adaptive threshold is the piece with no direct library equivalent and
-must be implemented deliberately.
+**Work.** **Written, and measured against the Python engine. Not green.** The image adapters exist —
+source-image loader (with EXIF orientation), hand loader, directory scanner and the preprocessor
+(resize, greyscale, Gaussian adaptive threshold) — all in `img2sketch-media/src/images/`, with the
+object-mask loader still to come. The measured comparison is in
+[`docs/parity.md`](docs/parity.md#measured-the-rust-engine-against-the-python-engine): every
+preprocessing stage agrees to ±1 LSB, and that one bit is not yet inside the contract.
 
 **Gate.** Thresholded output identical to the goldens on every sample image, or within the tolerance
 [`docs/parity.md`](docs/parity.md) defines, with the differing pixels explained by a generated diff
-image rather than waved through.
+image rather than waved through. **Currently failed on "identical":** 255 pixels of 120 000 differ
+(0.2 %) on the first test case, because OpenCV works in fixed point and this port carries `f64`.
+Closing it means porting OpenCV's fixed-point resize and blur kernels exactly.
 
 **Effort.** 3–5 days, and it is the phase most likely to overrun.
 
@@ -132,16 +136,20 @@ image rather than waved through.
 
 **Goal.** A real MP4 comes out of Rust.
 
-**Work.** The single-image use case, the frame pipeline (compose `n+1` while encoding `n`), the
-preview publisher and the progress reporter with the same throttle and monotonic percentages. The
-batch use case follows immediately, since it reuses the same loop. The encoder adapter itself is
-already written — `img2sketch-media/src/ffmpeg/writer.rs` pipes padded raw frames to an `ffmpeg`
-subprocess and is verified end to end against `ffprobe` — so what is left here is the drawing loop
-that feeds it.
+**Work.** **Done, and verified end to end.** The single-image and batch use cases, the drawing loop,
+the progress reporter with the same throttle and monotonic percentages, and the `img2sketch generate`
+CLI that wires them to the real adapters. `cargo run -p img2sketch-cli -- generate photo.png` writes
+an H.264 MP4: 87 frames for the parity case, `ffprobe`-confirmed, drawing frame and finished frame
+both correct. `--object-masks` is accepted but refused with an explanation, because the loader is not
+ported yet. The encoder adapter was already written — `img2sketch-media/src/ffmpeg/writer.rs` pipes
+padded raw frames to an `ffmpeg` subprocess.
 
 **Gate.** Decoded frames match the golden MP4 within the metrics in
 [`docs/parity.md`](docs/parity.md); frame count, dimensions, frame rate and duration are equal; the
-file plays in the Edge probe that already exists.
+file plays in the Edge probe that already exists. **Frame count and dimensions are equal and the
+drawing route is proven identical, but the per-frame metric is not yet met** — for the reason Phase 2
+records, one least-significant bit in the canvas steering a chaotic nearest-neighbour route. The Edge
+probe has not been re-run against a Rust-produced file.
 
 **Effort.** 4–6 days.
 
@@ -163,8 +171,11 @@ whole roadmap exists for; a UI that has to be adjusted means the contract was no
 
 **Goal.** The tool people run by hand behaves identically.
 
-**Work.** clap surface matching the current subcommands, options, defaults and messages; the "written
-next to its image" convention; batch over a folder.
+**Work.** **Substantially done.** clap surface matching the current subcommands (`generate`, `info`,
+`doctor`), options, defaults and ranges; the "written next to its image" convention; batch over a
+folder with a per-image failure list and a non-zero exit when any image fails; FFmpeg detected at
+runtime with a message that says where it was found and whether it can encode H.264. What is left is
+the object-mask flag (refused rather than accepted silently) and the message-level assertions.
 
 **Gate.** The CLI assertions from the current suite are ported and green against real images, and the
 image-info path agrees.
@@ -203,7 +214,7 @@ tagged engine.
 | Risk | Weight | Mitigation |
 |---|---|---|
 | Adaptive threshold (Gaussian local mean) has no drop-in equivalent | high | Own implementation, verified per-image against the goldens; this is the phase the schedule is most likely to lose |
-| `INTER_AREA` rounding differences flip near-threshold pixels | medium | Golden comparison with a bounded pixel-diff allowance, and a diff image for every failure |
+| `INTER_AREA` rounding differences flip near-threshold pixels | **high** — measured | Confirmed: ±1 LSB in the canvas flips 0.2 % of threshold pixels, and because the drawing route is a chaotic nearest-neighbour walk that costs most of the video's SSIM. Either emulate OpenCV's fixed-point resize and blur exactly, or accept it in the ledger of [`docs/parity.md`](docs/parity.md) |
 | The encoder toolchain becomes a build-farm problem | low | Resolved by decision 4: FFmpeg is invoked as a subprocess, so no build machine needs libclang, headers or a link step |
 | Rewriting ~2,100 lines of tests is where the calendar actually goes | medium | Port behavioural tests; skip tests that only assert re-exports or Pydantic behaviour that Rust's type system removes |
 | Two implementations drift while both exist | medium | The goldens and the e2e suite are the only gate; Python is retired at Phase 7 on a date, not eventually |

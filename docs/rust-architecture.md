@@ -103,9 +103,9 @@ grown an edge it should not have.
 | Crate | Version | Licence | Used for |
 |---|---|---|---|
 | `image` | 0.25.10 | MIT OR Apache-2.0 | Decode and encode PNG/JPEG/WebP/GIF/TIFF/BMP; EXIF orientation (OpenCV applies it, so parity requires it) |
-| `fast-image-resize` | 6.1.0 | MIT OR Apache-2.0 | The `INTER_AREA` equivalent, with SIMD. Package name has hyphens, the import is `fast_image_resize` |
-| `rayon` | 1.12.0 | MIT OR Apache-2.0 | Optional: parallel composition across cells. Added only if it measures |
-| `bytemuck` | 1.25.2 | Zlib OR Apache-2.0 OR MIT | Zero-copy casts between `image` buffers and the flat pixel slices the drawing loop wants |
+| `fast-image-resize` | 6.1.0 | MIT OR Apache-2.0 | **Considered, not adopted.** `INTER_AREA` is implemented in `images/resize.rs` instead — see [The image pipeline](#the-image-pipeline) |
+| `rayon` | 1.12.0 | MIT OR Apache-2.0 | **Considered, not adopted.** Composition across cells is sequential until it measures slow |
+| `bytemuck` | 1.25.2 | Zlib OR Apache-2.0 OR MIT | **Considered, not adopted.** The pixel buffers are already flat `Vec<u8>` and `&[u8]`; nothing needs casting |
 | `walkdir` | 2.5.0 | Unlicense/MIT | The folder scan for batch mode — depth-1 today, recursive whenever that option lands |
 | `uuid` | 1.28.0 | Apache-2.0 OR MIT | The `-<hex8>` upload suffix and the `.part-<…>` name an unfinished render is staged under (`v4` feature) |
 | `which` | 8.0.6 | MIT OR Apache-2.0 | Resolving `ffmpeg` on the user's `PATH` |
@@ -250,7 +250,7 @@ The parity-critical operations, and what to be afraid of:
 | Step | Python | Rust | Notes |
 |---|---|---|---|
 | Decode | `cv2.imread` | `image::open` | Verify colour order (`cv2` hands back BGR) and EXIF orientation |
-| Resize | `cv2.resize(..., INTER_AREA)` | `fast_image_resize` (Area) | Rounding can differ by a least-significant bit |
+| Resize | `cv2.resize(..., INTER_AREA)` | `images/resize.rs` — **own implementation** | Interval-overlap weights, so the zoom case falls out of the same arithmetic rather than a special case. Rounding can differ by a least-significant bit: OpenCV sums in fixed point |
 | Greyscale | `cv2.cvtColor` | `image`'s luma conversion | Must match the coefficient set, not just look right |
 | Threshold | `cv2.adaptiveThreshold(..., GAUSSIAN_C, ...)` | **own implementation** | No drop-in equivalent exists; this is the highest-risk item in the port |
 | Mask/overlay | NumPy alpha blending | plain pixel loops or a small LUT | The hand overlay is per-frame work; keeping it allocation-free is the point |

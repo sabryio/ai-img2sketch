@@ -57,6 +57,34 @@ pub fn load_frame(path: &Path) -> Result<Frame, ImageError> {
     Ok(Frame::new(dimensions, rgb.into_raw())?)
 }
 
+/// Reads image files off the filesystem, as the engine's [`ImageLoader`] port.
+///
+/// The port returns the engine's own error type, so the adapter's job is to say *which file* and
+/// *what the decoder said* — the `image` crate's error never crosses the boundary.
+///
+/// [`ImageLoader`]: img2sketch_core::application::ports::ImageLoader
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FileSystemImageLoader;
+
+impl img2sketch_core::application::ports::ImageLoader for FileSystemImageLoader {
+    fn load(
+        &self,
+        path: &Path,
+    ) -> Result<Frame, img2sketch_core::application::ports::ImageLoadError> {
+        use img2sketch_core::application::ports::ImageLoadError;
+
+        load_frame(path).map_err(|error| ImageLoadError::Unreadable {
+            path: path.to_path_buf(),
+            // The port's message already names the file, so this is only what went wrong.
+            message: match error {
+                ImageError::Open { source, .. } => source.to_string(),
+                ImageError::Decode { source, .. } => source.to_string(),
+                other => other.to_string(),
+            },
+        })
+    }
+}
+
 /// Why an image could not be read.
 #[derive(Debug, thiserror::Error)]
 pub enum ImageError {

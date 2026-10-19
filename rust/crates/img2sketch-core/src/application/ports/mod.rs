@@ -13,7 +13,17 @@
 //! function.
 
 pub mod ffmpeg_locator;
+pub mod hand_provider;
+pub mod image_loader;
+pub mod image_preprocessor;
+pub mod image_scanner;
+pub mod progress_reporter;
 pub mod video_writer;
 
 pub use ffmpeg_locator::FfmpegLocator;
-pub use video_writer::{VideoWriter, VideoWriterError};
+pub use hand_provider::{HandLoadError, HandProvider};
+pub use image_loader::{ImageLoadError, ImageLoader};
+pub use image_preprocessor::{ImagePreprocessor, PreprocessError, PreprocessedImage};
+pub use image_scanner::{ImageScanner, ScanError};
+pub use progress_reporter::{GenerationProgress, ProgressReporter, SilentProgress};
+pub use video_writer::{VideoWriter, VideoWriterError, VideoWriterFactory};

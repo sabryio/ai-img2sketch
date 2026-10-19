@@ -13,7 +13,8 @@
 //! - [`probe`] — the machine as this module sees it: filesystem, environment, process.
 //! - [`candidates`] — the places an FFmpeg might be, one type per kind of place.
 //! - [`locator`] — searching them in order of trust and reporting what was found.
-//! - [`writer`] — the [`VideoWriter`](img2sketch_core::application::ports::VideoWriter) adapter.
+//! - [`writer`] — the [`VideoWriter`](img2sketch_core::application::ports::VideoWriter) adapter,
+//!   and the factory that hands one out per video.
 
 pub mod candidates;
 pub mod encoder;
@@ -24,4 +25,4 @@ pub mod writer;
 pub use encoder::EncodeRequest;
 pub use locator::SystemFfmpegLocator;
 pub use probe::{LocateEnvironment, SystemEnvironment};
-pub use writer::FfmpegVideoWriter;
+pub use writer::{FfmpegVideoWriter, FfmpegWriterFactory};

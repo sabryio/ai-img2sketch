@@ -7,6 +7,21 @@ invariants are in [`../docs/rust-architecture.md`](../docs/rust-architecture.md)
 Nothing here is wired into the app yet. The Python engine in `../src/` remains the shipping
 implementation until the Playwright suite passes against this one.
 
+## What works today
+
+The drawing loop runs end to end. The CLI reads a source image — or a folder of them — preprocesses
+it, draws it cell by cell with the hand, pipes the padded frames to FFmpeg and writes an H.264 MP4:
+
+```powershell
+cargo run -p img2sketch-cli -- generate ../images/cartoon.png --split-len 10 --frame-rate 10 --object-skip-rate 8
+cargo run -p img2sketch-cli -- generate ../images --output out/          # one video per image
+```
+
+Not yet ported: object-mask files (`--object-masks` is refused with a reason rather than quietly
+ignored), the HTTP API, and preview stills. How closely the Rust engine's output matches the Python
+engine's is **measured and recorded** in [`../docs/parity.md`](../docs/parity.md) — read that before
+assuming the two draw the same video.
+
 ## Layout, and the rule that holds it together
 
 ```

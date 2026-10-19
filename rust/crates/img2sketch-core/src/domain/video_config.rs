@@ -15,6 +15,8 @@ pub const DEFAULT_FRAME_RATE: u32 = 25;
 pub const DEFAULT_OBJECT_SKIP_RATE: u32 = 8;
 /// The default time the finished colour image is held at the end.
 pub const DEFAULT_END_DURATION_SEC: u32 = 2;
+/// The default darkness below which a pixel counts as ink.
+pub const DEFAULT_BLACK_PIXEL_THRESHOLD: u32 = 10;
 
 /// The accepted range for [`VideoConfig::split_len`].
 pub const SPLIT_LEN_RANGE: std::ops::RangeInclusive<u32> = 5..=100;
@@ -26,6 +28,8 @@ pub const OBJECT_SKIP_RATE_RANGE: std::ops::RangeInclusive<u32> = 1..=100;
 pub const DRAW_DURATION_RANGE: std::ops::RangeInclusive<f32> = 0.1..=600.0;
 /// The accepted range for [`VideoConfig::end_duration_sec`].
 pub const END_DURATION_RANGE: std::ops::RangeInclusive<u32> = 0..=10;
+/// The accepted range for [`VideoConfig::black_pixel_threshold`].
+pub const BLACK_PIXEL_THRESHOLD_RANGE: std::ops::RangeInclusive<u32> = 0..=255;
 
 /// How a sketch video should be drawn.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -41,6 +45,11 @@ pub struct VideoConfig {
     pub draw_duration_sec: Option<f32>,
     /// Seconds the finished colour image is held after the drawing ends.
     pub end_duration_sec: u32,
+    /// How dark a thresholded pixel must be to count as ink, `0..=255`.
+    ///
+    /// The thresholded image is almost always pure black or pure white, so this is a sanity filter
+    /// rather than a tuning knob: raising it draws cells that are nearly white.
+    pub black_pixel_threshold: u32,
 }
 
 /// Why a configuration was refused.
@@ -68,6 +77,7 @@ impl Default for VideoConfig {
             object_skip_rate: DEFAULT_OBJECT_SKIP_RATE,
             draw_duration_sec: None,
             end_duration_sec: DEFAULT_END_DURATION_SEC,
+            black_pixel_threshold: DEFAULT_BLACK_PIXEL_THRESHOLD,
         }
     }
 }
@@ -87,6 +97,11 @@ impl VideoConfig {
             OBJECT_SKIP_RATE_RANGE,
         )?;
         check_side("end duration", self.end_duration_sec, END_DURATION_RANGE)?;
+        check_side(
+            "black pixel threshold",
+            self.black_pixel_threshold,
+            BLACK_PIXEL_THRESHOLD_RANGE,
+        )?;
         if let Some(duration) = self.draw_duration_sec {
             check_duration("draw duration", duration, DRAW_DURATION_RANGE)?;
         }
@@ -139,8 +154,8 @@ fn check_duration(
 #[cfg(test)]
 mod tests {
     use super::{
-        DRAW_DURATION_RANGE, FRAME_RATE_RANGE, OBJECT_SKIP_RATE_RANGE, SPLIT_LEN_RANGE,
-        VideoConfig, VideoConfigError,
+        BLACK_PIXEL_THRESHOLD_RANGE, DRAW_DURATION_RANGE, FRAME_RATE_RANGE, OBJECT_SKIP_RATE_RANGE,
+        SPLIT_LEN_RANGE, VideoConfig, VideoConfigError,
     };
 
     #[test]
@@ -151,6 +166,7 @@ mod tests {
         assert_eq!(config.object_skip_rate, 8);
         assert_eq!(config.draw_duration_sec, None);
         assert_eq!(config.end_duration_sec, 2);
+        assert_eq!(config.black_pixel_threshold, 10);
         assert!(!config.uses_draw_duration());
         config.validate().unwrap();
     }
@@ -187,6 +203,17 @@ mod tests {
         for value in [*DRAW_DURATION_RANGE.start(), *DRAW_DURATION_RANGE.end()] {
             VideoConfig {
                 draw_duration_sec: Some(value),
+                ..VideoConfig::default()
+            }
+            .validate()
+            .unwrap();
+        }
+        for value in [
+            *BLACK_PIXEL_THRESHOLD_RANGE.start(),
+            *BLACK_PIXEL_THRESHOLD_RANGE.end(),
+        ] {
+            VideoConfig {
+                black_pixel_threshold: value,
                 ..VideoConfig::default()
             }
             .validate()
@@ -235,6 +262,14 @@ mod tests {
         .validate()
         .unwrap_err();
         assert!(error.to_string().contains("end duration"));
+
+        let error = VideoConfig {
+            black_pixel_threshold: 256,
+            ..VideoConfig::default()
+        }
+        .validate()
+        .unwrap_err();
+        assert!(error.to_string().contains("black pixel threshold"));
     }
 
     #[test]

@@ -98,6 +98,58 @@ An accepted difference must be written down: case, artifact, how many pixels or 
 the cause if known, and the decision. If this list grows past one or two entries, the threshold
 implementation is wrong and should be fixed rather than excused.
 
+| Case | Artifact | Difference | Cause | Decision |
+|---|---|---|---|---|
+| 397×303 cartoon, split 10, skip 8 | Thresholded grid | 255 pixels of 120 000; 617 ink cells against 615 | OpenCV resizes and blurs in fixed point, this port uses `f64` and rounds once: ±1 LSB on the pixels where the two roundings disagree | **Open.** Either emulate OpenCV's fixed-point kernels exactly, or record it here as accepted. See below for what it costs |
+
+## Measured: the Rust engine against the Python engine
+
+First end-to-end comparison: `images/cartoon.png` scaled to 397×303 — a canvas that is a multiple of
+the split length in neither direction, so the resize has to do real work — drawn with `--split-len 10
+--frame-rate 10 --object-skip-rate 8 --end-duration 1`.
+
+| Stage | Compared | Result |
+|---|---|---|
+| Canvas | `cv2.resize(INTER_AREA)` vs `images/resize.rs` | 90 % of pixels identical, the rest exactly 1 apart |
+| Greyscale | `cv2.cvtColor` vs `to_grayscale` | 90 % identical, the rest 1 apart |
+| Local mean | `cv2.GaussianBlur(15, σ≈2.6, replicate)` vs `gaussian_blur` | 1 apart at most, everywhere |
+| Threshold | `cv2.adaptiveThreshold` vs `gaussian_adaptive_threshold` | 255 of 120 000 pixels differ (0.2 %); 617 inked cells against 615 |
+| Drawing route, **same** thresholded image | the Python loop fed the Rust canvas | **frame count equal (87), SSIM ≥ 0.9946, median 0.9979** |
+| Decoded video, Python engine vs Rust engine | per-frame PSNR / SSIM | PSNR min 6.7 dB, median 15.3 dB; SSIM min 0.543, median 0.869 |
+
+The last two rows are the finding, and it is worth stating plainly rather than burying it.
+
+**Given the same thresholded image, the two engines are the same engine.** Running the *Python*
+drawing loop on the *Rust* canvas reproduces the Rust video: same frame count, frames agreeing to
+SSIM 0.998. Grid arithmetic, cell ordering, the nearest-neighbour route, hand placement and the
+frame-count arithmetic are matched.
+
+**One least-significant bit in the canvas costs nearly all of the video's similarity.** The route is
+a greedy nearest-neighbour walk, and it is chaotic: add or remove one inked cell and the walk takes a
+different turn, so at frame *k* the two videos have drawn a different *set* of cells while both are
+drawing the same picture. They converge again by the end — the final frames agree to 41.9 dB — and
+the whole difference lives inside the 0.2 % of threshold pixels that flip.
+
+The cause is arithmetic rather than algorithm: OpenCV resizes and blurs in fixed point, this port
+carries `f64` and rounds once, and the two disagree by one where their roundings disagree. Closing it
+means reimplementing OpenCV's fixed-point kernels exactly — `resizeArea_`'s integer weights and the
+kernel quantisation inside `sepFilter2D` — and then the *threshold* is identical and the route with
+it. That is a real piece of work, and it is the only known route to a green `task parity`.
+
+Two things that look like the same bug and are not:
+
+- **A zoom is still an area average.** OpenCV documents `INTER_AREA` when zooming as "similar to
+  `INTER_NEAREST`", which invites the reading that the zoom case is plain nearest. It is not: a
+  destination interval narrower than a source pixel takes that pixel whole and mixes with its
+  neighbour only where it straddles the boundary. Growing `[0, 10, 20]` to seven pixels gives
+  `[0, 0, 7, 10, 13, 20, 20]`, and reading the documentation the obvious way gives
+  `[0, 0, 10, 10, 20, 20, 20]` — wrong by a pixel width at every straddle. Deciding the axis's
+  behaviour by comparing lengths is the trap; the interval arithmetic handles both cases by itself.
+- **`cv2.GaussianBlur(src, (15,15), 0, 0, cv2.BORDER_REPLICATE)` does not mean what it looks like.**
+  The fourth positional argument is `dst`, not `sigmaY`, so that call blurs with `sigmaY = 1.0` and
+  the *default* border, and comparing against it manufactures a 46-LSB "disagreement" that is not
+  there. Use `cv2.GaussianBlur(src, (15,15), 0, None, 0, cv2.BORDER_REPLICATE)`.
+
 ## Diagnosing a failure
 
 When parity fails, the report names the case and the artifact, and produces a diff image: pixels that

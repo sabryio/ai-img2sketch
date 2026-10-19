@@ -20,7 +20,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
-use img2sketch_core::application::ports::{VideoWriter, VideoWriterError};
+use img2sketch_core::application::ports::{VideoWriter, VideoWriterError, VideoWriterFactory};
 use img2sketch_core::domain::{Dimensions, EncoderSettings, Frame};
 
 use super::encoder::encode_request;
@@ -208,6 +208,57 @@ impl Drop for FfmpegVideoWriter {
     }
 }
 
+/// Opens [`FfmpegVideoWriter`]s, one video at a time, with one set of settings.
+///
+/// The locator runs once per run and the settings are decided once per run, so both live here and
+/// every video in a batch is encoded identically. A factory also makes the drawing loop testable
+/// without FFmpeg at all: the loop asks for a writer and never learns what answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfmpegWriterFactory {
+    executable: PathBuf,
+    settings: EncoderSettings,
+}
+
+impl FfmpegWriterFactory {
+    /// Builds a factory around the executable the locator found.
+    #[must_use]
+    pub fn new(executable: PathBuf, settings: EncoderSettings) -> Self {
+        Self {
+            executable,
+            settings,
+        }
+    }
+
+    /// The executable every writer will be started from.
+    #[must_use]
+    pub fn executable(&self) -> &Path {
+        &self.executable
+    }
+
+    /// The settings every writer will be given.
+    #[must_use]
+    pub const fn settings(&self) -> EncoderSettings {
+        self.settings
+    }
+}
+
+impl VideoWriterFactory for FfmpegWriterFactory {
+    fn open(
+        &self,
+        output: &Path,
+        dimensions: Dimensions,
+        frame_rate: u32,
+    ) -> Result<Box<dyn VideoWriter>, VideoWriterError> {
+        Ok(Box::new(FfmpegVideoWriter::open(
+            &self.executable,
+            output,
+            dimensions,
+            frame_rate,
+            self.settings,
+        )?))
+    }
+}
+
 /// The temporary file FFmpeg writes to before the result is published.
 ///
 /// The extension is kept: FFmpeg chooses its muxer from it, and a name that ends in `.mp4` is the
@@ -227,8 +278,41 @@ fn staged_path(output: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::staged_path;
+    use super::{FfmpegWriterFactory, staged_path};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_factory_hands_out_writers_for_the_executable_it_was_given() {
+        let factory = FfmpegWriterFactory::new(
+            PathBuf::from("C:/ffmpeg/bin/ffmpeg.exe"),
+            img2sketch_core::domain::EncoderSettings::default(),
+        );
+        assert_eq!(factory.executable(), Path::new("C:/ffmpeg/bin/ffmpeg.exe"));
+        assert_eq!(
+            factory.settings(),
+            img2sketch_core::domain::EncoderSettings::default()
+        );
+    }
+
+    #[test]
+    fn opening_through_a_factory_that_cannot_spawn_reports_io_rather_than_panicking() {
+        use img2sketch_core::application::ports::{VideoWriterError, VideoWriterFactory};
+        use img2sketch_core::domain::{Dimensions, EncoderSettings};
+
+        let factory = FfmpegWriterFactory::new(
+            PathBuf::from("C:/definitely/not/here/ffmpeg.exe"),
+            EncoderSettings::default(),
+        );
+        let error = factory
+            .open(
+                Path::new("C:/out/sketch.mp4"),
+                Dimensions::new(10, 10).unwrap(),
+                25,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, VideoWriterError::Io(_)), "got: {error}");
+    }
 
     #[test]
     fn a_staged_file_sits_beside_the_output_and_keeps_its_extension() {

@@ -1,8 +1,8 @@
 //! Writing frames into a video file.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use crate::domain::Frame;
+use crate::domain::{Dimensions, Frame};
 
 /// Writes finished frames to a video, in the order they are given.
 ///
@@ -26,6 +26,26 @@ pub trait VideoWriter: std::fmt::Debug + Send {
     ///
     /// Returns [`VideoWriterError`] when the encoder cannot complete the file.
     fn release(self: Box<Self>) -> Result<PathBuf, VideoWriterError>;
+}
+
+/// Opens a writer for one output file.
+///
+/// The drawing loop asks for a writer per video; a batch asks for one per image. Which encoder and
+/// which settings answer that request is the adapter's business — the loop only knows that a frame
+/// goes in, and a path comes out.
+pub trait VideoWriterFactory: std::fmt::Debug + Send + Sync {
+    /// Starts a writer for `output`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`VideoWriterError`] when the encoder cannot be started — for instance when the
+    /// directory cannot be created or the executable cannot be spawned.
+    fn open(
+        &self,
+        output: &Path,
+        dimensions: Dimensions,
+        frame_rate: u32,
+    ) -> Result<Box<dyn VideoWriter>, VideoWriterError>;
 }
 
 /// Why writing a video failed.
