@@ -1,5 +1,13 @@
 # Architecture Documentation
 
+> **Status.** This document describes the engine as it exists today: Python 3.13, FastAPI, OpenCV
+> and PyAV, with the Playwright suite as its behavioural contract. A port of the engine, the API and
+> the CLI to Rust is planned behind a contract that does not move — see
+> [`docs/rust-architecture.md`](docs/rust-architecture.md) for the target design,
+> [`docs/parity.md`](docs/parity.md) for how the drawing output is proven identical, and
+> [`ROADMAP.md`](ROADMAP.md) for the phases and their gates. The frontend and its design system are
+> unaffected either way.
+
 ## Overview
 
 This project follows a **Clean Architecture** (Ports & Adapters / Hexagonal)
@@ -229,7 +237,7 @@ rule.
 ## Type Safety
 
 - **Pydantic**: runtime validation of domain models
-- **Type hints**: full coverage, Python 3.10+ syntax
+- **Type hints**: full coverage, Python 3.13
 - **ty**: static type checking (`task typecheck`)
 - **numpy.typing**: typed arrays for pixel data
 - No `# type: ignore`; the OpenCV boundary uses explicit `typing.cast`
@@ -263,6 +271,3 @@ Ideas that fit the current architecture:
 1. **Multiple hand styles**: an alternate `HandOverlayService` implementation
 2. **Extra output formats**: a second `VideoWriter` adapter
 3. **Recursive batch scanning**: a `recursive` option on the scanner adapter
-4. **Progress reporting**: a `ProgressReporter` port injected into the use
-   case, so per-frame progress reaches the SSE stream (today the HTTP layer
-   publishes lifecycle events only)

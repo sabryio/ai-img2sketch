@@ -337,6 +337,13 @@ so a restart clears them, and a client that wants a file gone sooner deletes it.
   shell (sidecar vs Docker, lifecycle, path handling, env vars).
 - `docs/frontend-ai-prompt.md` — a ready-to-paste prompt for an AI coding
   agent to generate the Tauri frontend against the API.
+- `ARCHITECTURE.md` — the engine as it exists today, layer by layer.
+- `ROADMAP.md` — the plan to port the engine, API and CLI to Rust, with the
+  phases, gates and risks.
+- `docs/rust-architecture.md` — the Rust target design and the contract it must
+  keep.
+- `docs/parity.md` — how identical drawing output is defined, measured and
+  proven across the port.
 
 ## Project Structure
 

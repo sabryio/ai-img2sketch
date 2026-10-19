@@ -6,6 +6,13 @@ The AI-Img2Sketch backend ships as a FastAPI service (REST + Server-Sent
 Events) that is containerized with Docker. This guide explains how a Tauri app
 starts, locates, and talks to it — including the Docker-not-running case.
 
+> **Planned change.** The engine, the API and the CLI are being ported to Rust
+> behind the same HTTP contract — see
+> [`rust-architecture.md`](rust-architecture.md) and [`../ROADMAP.md`](../ROADMAP.md).
+> When that lands, "sidecar" means the Rust `img2sketch-api` binary: same name,
+> same routes, same settings, no Python install. Nothing in this guide's
+> lifecycle, CORS list, path rules or event stream changes.
+
 ## Architecture
 
 - **Backend**: FastAPI server (`ai_img2sketch.presentation.api.app:app`),
