@@ -5,18 +5,41 @@
 //! parity harness drifts with them. So the arguments are *built* by a pure function and asserted
 //! in a test, rather than assembled at the call site where nothing would notice.
 //!
-//! Frames arrive on standard input as raw `rgb24` — no temporary files, no intermediate PNG — and
+//! Frames arrive on standard input as raw `bgr24` — no temporary files, no intermediate PNG — and
 //! the output is the only thing the process writes.
 
 use std::path::{Path, PathBuf};
 
-use img2sketch_core::domain::{Dimensions, EncoderSettings, PIXEL_FORMAT};
+use img2sketch_core::domain::{Dimensions, EncoderSettings, Frame, PIXEL_FORMAT};
 
 /// The pixel format frames arrive in, and the demuxer that reads them.
 ///
 /// RGB rather than YUV because the engine draws in RGB and asking FFmpeg to convert once, in the
 /// encoder where it is fast and threaded, beats converting per frame in the drawing loop.
-pub const RAW_INPUT: (&str, &str) = ("rawvideo", "rgb24");
+///
+/// BGR rather than RGB, and that one letter is load-bearing. FFmpeg converts `rgb24` and `bgr24`
+/// to `yuv420p` *differently*: a white of 255 survives the `rgb24` round trip at 255, and comes
+/// back at 250 through `bgr24`. Neither stream is tagged with a colour range — `ffprobe` reports
+/// `color_range=unknown` for both — so the decoder cannot tell them apart and the difference
+/// lands in the picture, five steps across every pixel of the paper. It is not the drawing: the
+/// drawn frames agree cell for cell. It is the conversion. The Python engine's PyAV writer hands
+/// libx264 `bgr24` frames, so this does too, and the two videos then differ by a rate-control
+/// decision on a few hundred pixels instead of by a level on all of them.
+pub const RAW_INPUT: (&str, &str) = ("rawvideo", "bgr24");
+
+/// One frame's bytes in [`RAW_INPUT`]'s channel order.
+///
+/// The engine draws in RGB and the encoder expects BGR, so this is a channel swap and nothing
+/// more — see [`RAW_INPUT`] for why the swap is worth making rather than asking FFmpeg to accept
+/// the RGB bytes directly.
+#[must_use]
+pub fn interleaved(frame: &Frame) -> Vec<u8> {
+    let mut bytes = frame.rgb().to_vec();
+    for pixel in bytes.as_chunks_mut::<3>().0 {
+        pixel.swap(0, 2);
+    }
+    bytes
+}
 
 /// Everything one encode needs to know.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,7 +155,7 @@ mod tests {
                 "-f",
                 "rawvideo",
                 "-pixel_format",
-                "rgb24",
+                "bgr24",
                 "-video_size",
                 "360x490",
                 "-framerate",
@@ -220,7 +243,7 @@ mod tests {
 
     #[test]
     fn raw_frames_are_what_the_encoder_is_told_to_expect() {
-        assert_eq!(RAW_INPUT, ("rawvideo", "rgb24"));
+        assert_eq!(RAW_INPUT, ("rawvideo", "bgr24"));
         let request = encode_request(
             "ffmpeg".as_ref(),
             "out.mp4".as_ref(),
@@ -231,5 +254,15 @@ mod tests {
         let args = request.args();
         assert!(args.contains(&"pipe:0".to_string()));
         assert!(args.contains(&"-an".to_string()), "the video has no audio");
+    }
+
+    #[test]
+    fn a_frame_is_handed_over_in_the_channel_order_the_encoder_was_told() {
+        use img2sketch_core::domain::Frame;
+
+        let frame =
+            Frame::new(Dimensions::new(2, 1).unwrap(), vec![10, 20, 30, 40, 50, 60]).unwrap();
+        // Red and blue exchange; green stays where it was.
+        assert_eq!(super::interleaved(&frame), vec![30, 20, 10, 60, 50, 40]);
     }
 }

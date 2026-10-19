@@ -60,7 +60,7 @@ Locked, from the scoping conversation:
    binding crate (`ffmpeg-next`, `ffmpeg-sys-next`, `ffmpeg-the-third`) generates its bindings with
    `bindgen`, which needs libclang, which would make an LLVM toolchain a prerequisite for compiling
    this repository and a set of shared FFmpeg libraries a load-time requirement for the app. Frames
-   are piped as raw `rgb24` with the arguments already in use, so the encoder is not itself a
+   are piped as raw `bgr24` with the arguments already in use, so the encoder is not itself a
    variable while everything else is being verified. Where that executable comes from became a
    product feature rather than a build detail: it is searched for in order of trust and reported as a
    state — found, or not; and if found, whether it can actually encode H.264. That search is
@@ -213,8 +213,8 @@ tagged engine.
 
 | Risk | Weight | Mitigation |
 |---|---|---|
-| Adaptive threshold (Gaussian local mean) has no drop-in equivalent | high | Own implementation, verified per-image against the goldens; this is the phase the schedule is most likely to lose |
-| `INTER_AREA` rounding differences flip near-threshold pixels | **high** — measured | Confirmed: ±1 LSB in the canvas flips 0.2 % of threshold pixels, and because the drawing route is a chaotic nearest-neighbour walk that costs most of the video's SSIM. Either emulate OpenCV's fixed-point resize and blur exactly, or accept it in the ledger of [`docs/parity.md`](docs/parity.md) |
+| Adaptive threshold (Gaussian local mean) has no drop-in equivalent | closed | Own implementation, verified against the goldens pixel for pixel; it turned out not to be a plain blur — see the ledger of [`docs/parity.md`](docs/parity.md) |
+| `INTER_AREA` rounding differences flip near-threshold pixels | **closed** | Was real, and cost most of the video's SSIM. Solved by implementing OpenCV's fixed-point `hal::resize` and its `CV_32F` local mean from the library's own source: the canvas, the grey image and the threshold now agree on every pixel, so no threshold cell flips. A residual decoder-to-decoder difference remains and is the encoder's build, measured and accepted in the ledger of [`docs/parity.md`](docs/parity.md) |
 | The encoder toolchain becomes a build-farm problem | low | Resolved by decision 4: FFmpeg is invoked as a subprocess, so no build machine needs libclang, headers or a link step |
 | Rewriting ~2,100 lines of tests is where the calendar actually goes | medium | Port behavioural tests; skip tests that only assert re-exports or Pydantic behaviour that Rust's type system removes |
 | Two implementations drift while both exist | medium | The goldens and the e2e suite are the only gate; Python is retired at Phase 7 on a date, not eventually |

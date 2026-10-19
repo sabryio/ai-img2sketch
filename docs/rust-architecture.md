@@ -268,11 +268,12 @@ substitute a "visually similar" operator and call the phase done.
 The product requirement is that the finished video **plays where it is watched** — the Tauri webview
 — which is why the project moved to H.264. Any Rust choice has to keep that true.
 
-**Decided: invoke an `ffmpeg` executable as a subprocess.** Frames are piped to it as raw `rgb24`,
-and it is given the arguments already in use (`libx264`, crf 18, `veryfast`, `yuv420p`,
-`+faststart`), which are built by a pure function and asserted in `ffmpeg/encoder.rs`. The encoder is
-not the thing being rewritten, so keeping it byte-for-byte identical removes a risk axis instead of
-adding one.
+**Decided: invoke an `ffmpeg` executable as a subprocess.** Frames are piped to it as raw `bgr24`
+(the Python writer's own input format — `rgb24` converts to `yuv420p` differently and costs 6 dB of
+PSNR on its own), and it is given the arguments already in use (`libx264`, crf 18, `veryfast`,
+`yuv420p`, `+faststart`), which are built by a pure function and asserted in `ffmpeg/encoder.rs`. The
+encoder is not the thing being rewritten, so keeping it byte-for-byte identical removes a risk axis
+instead of adding one.
 
 Three things decided it, in order of weight:
 

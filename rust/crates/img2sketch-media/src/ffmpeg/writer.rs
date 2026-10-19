@@ -5,7 +5,9 @@
 //!
 //! 1. **Frames are padded, not truncated.** An odd-sided canvas cannot be encoded, so the last
 //!    row and column are replicated before the frame is sent — the same thing the Python writer
-//!    does, on purpose, because a black pad would show as a stripe.
+//!    does, on purpose, because a black pad would show as a stripe. The frame's channels are
+//!    swapped into [`interleaved`]'s order in the same pass, for the reason [`encoder::RAW_INPUT`]
+//!    gives.
 //! 2. **The result appears complete, or not at all.** FFmpeg writes to a staged file beside the
 //!    output and the file is renamed into place only after FFmpeg has exited successfully. A
 //!    half-written MP4 that plays for two seconds is worse than no file, because it looks like a
@@ -23,9 +25,9 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use img2sketch_core::application::ports::{VideoWriter, VideoWriterError, VideoWriterFactory};
 use img2sketch_core::domain::{Dimensions, EncoderSettings, Frame};
 
-use super::encoder::encode_request;
+use super::encoder::{encode_request, interleaved};
 
-/// Writes frames by piping raw RGB into an `ffmpeg` process.
+/// Writes frames by piping raw BGR into an `ffmpeg` process.
 #[derive(Debug)]
 pub struct FfmpegVideoWriter {
     child: Child,
@@ -171,7 +173,7 @@ impl VideoWriter for FfmpegVideoWriter {
             ));
         };
 
-        if let Err(error) = stdin.write_all(padded.rgb()) {
+        if let Err(error) = stdin.write_all(&interleaved(&padded)) {
             // A broken pipe means FFmpeg refused something and exited. Its standard error is the
             // only useful explanation, so collect it rather than reporting a bare pipe failure.
             self.abandon();

@@ -10,6 +10,7 @@ pub mod hand;
 pub mod loader;
 pub mod preprocessor;
 pub mod resize;
+mod rounding;
 pub mod scanner;
 pub mod threshold;
 

@@ -83,60 +83,101 @@ failure go away is the one thing this document exists to prevent.
 
 | Compared | Metric | Tolerance |
 |---|---|---|
-| Decoded video frames | PSNR | ≥ 40 dB against the golden MP4 |
+| Decoded video frames | PSNR | ≥ 38 dB against the golden MP4 |
 | Decoded video frames | SSIM | ≥ 0.99 |
 | Preview stills | PSNR | ≥ 35 dB — they are ephemeral JPEGs whose only job is to stream to the UI |
 | File size | Ratio to golden | Within ±15 % (encoder framing differences, not quality) |
 
-The tolerance exists because *no two encoders produce the same bytes* — not because the picture is
-allowed to drift. If a decoded frame falls below the PSNR floor, that is a defect in the pipeline, not
-in the encoder.
+The decoded-video floors exist because *no two builds of an encoder produce the same bytes* — not
+because the picture is allowed to drift. The Python writer links the libx264 inside PyAV's bundled
+FFmpeg; the port links none, and runs whichever `ffmpeg` the machine has. Those two disagree on
+identical input by 39.4 dB and 0.992 on the reference case, which is the floor, and it is measured
+rather than chosen: the ledger's control is the measurement. A case that falls below the floor is a
+defect in the pipeline; a case that lands on it is the encoder. **The comparisons that decide parity
+are the pixel ones, where the answer is zero — the video floors only catch a pipeline that has
+stopped encoding what it drew.**
 
 ### The ledger
 
 An accepted difference must be written down: case, artifact, how many pixels or how many decibels,
-the cause if known, and the decision. If this list grows past one or two entries, the threshold
-implementation is wrong and should be fixed rather than excused.
+the cause if known, and the decision. If this list grows past one or two entries, something is wrong
+and should be fixed rather than excused.
 
 | Case | Artifact | Difference | Cause | Decision |
 |---|---|---|---|---|
-| 397×303 cartoon, split 10, skip 8 | Thresholded grid | 255 pixels of 120 000; 617 ink cells against 615 | OpenCV resizes and blurs in fixed point, this port uses `f64` and rounds once: ±1 LSB on the pixels where the two roundings disagree | **Open.** Either emulate OpenCV's fixed-point kernels exactly, or record it here as accepted. See below for what it costs |
+| Every case | Thresholded grid | was 255 pixels of 120 000, 617 ink cells against 615 | The port resized and blurred in `f64` where OpenCV uses fixed point | **Closed.** The resampler and the local mean are now OpenCV's arithmetic, read from its own source, and the two agree on every pixel. See below |
+| Every case | Decoded video | PSNR 39.4 dB, SSIM 0.992 — and the same figures for two encodes of *identical* input | The two writers link different builds of libx264: PyAV bundles its own FFmpeg, the port runs the machine's. x264 reconstructs a hard edge according to its own threading and rate-control decisions, which differ between builds | **Accepted**, on the control below. The floor belongs to the encoder, not the engine, and no change to the port can move it |
 
 ## Measured: the Rust engine against the Python engine
 
-First end-to-end comparison: `images/cartoon.png` scaled to 397×303 — a canvas that is a multiple of
-the split length in neither direction, so the resize has to do real work — drawn with `--split-len 10
+`output/parity/sample.png` at 397×303 — a canvas that is a multiple of the split length in neither
+direction, so the resize has to do real work — drawn by both engines at `--split-len 10
 --frame-rate 10 --object-skip-rate 8 --end-duration 1`.
 
 | Stage | Compared | Result |
 |---|---|---|
-| Canvas | `cv2.resize(INTER_AREA)` vs `images/resize.rs` | 90 % of pixels identical, the rest exactly 1 apart |
-| Greyscale | `cv2.cvtColor` vs `to_grayscale` | 90 % identical, the rest 1 apart |
-| Local mean | `cv2.GaussianBlur(15, σ≈2.6, replicate)` vs `gaussian_blur` | 1 apart at most, everywhere |
-| Threshold | `cv2.adaptiveThreshold` vs `gaussian_adaptive_threshold` | 255 of 120 000 pixels differ (0.2 %); 617 inked cells against 615 |
-| Drawing route, **same** thresholded image | the Python loop fed the Rust canvas | **frame count equal (87), SSIM ≥ 0.9946, median 0.9979** |
-| Decoded video, Python engine vs Rust engine | per-frame PSNR / SSIM | PSNR min 6.7 dB, median 15.3 dB; SSIM min 0.543, median 0.869 |
+| Canvas | `cv2.resize(INTER_AREA)` vs `resize_area` | **0 of 360 000 pixels differ** |
+| Greyscale | `cv2.cvtColor` vs `to_grayscale` | **0 of 120 000 pixels differ** |
+| Local mean | the mean inside `cv2.adaptiveThreshold` vs `gaussian_blur` | **0 of 120 000 pixels differ** |
+| Threshold | `cv2.adaptiveThreshold` vs `gaussian_adaptive_threshold` | **0 of 120 000 pixels differ**; 13 750 ink cells on both sides |
+| Frame count | | equal, 86 |
+| Decoded video | per-frame PSNR / SSIM | PSNR min 39.5 dB, median 43.5 dB; SSIM min 0.9922, median 0.9970 |
 
-The last two rows are the finding, and it is worth stating plainly rather than burying it.
+### The preprocessing is bit-exact, and it had to be
 
-**Given the same thresholded image, the two engines are the same engine.** Running the *Python*
-drawing loop on the *Rust* canvas reproduces the Rust video: same frame count, frames agreeing to
-SSIM 0.998. Grid arithmetic, cell ordering, the nearest-neighbour route, hand placement and the
-frame-count arithmetic are matched.
+The threshold is a knife edge and the drawing route is a chaotic greedy walk, so one pixel of the
+canvas decides a whole video. The three stages are now OpenCV's own arithmetic rather than an
+approximation of it:
 
-**One least-significant bit in the canvas costs nearly all of the video's similarity.** The route is
-a greedy nearest-neighbour walk, and it is chaotic: add or remove one inked cell and the walk takes a
-different turn, so at frame *k* the two videos have drawn a different *set* of cells while both are
-drawing the same picture. They converge again by the end — the final frames agree to 41.9 dB — and
-the whole difference lives inside the 0.2 % of threshold pixels that flip.
+- **`INTER_AREA` is three algorithms** and `hal::resize` picks between them by scale factor — a
+  whole-block average, an overlap average with `f32` weights, and a bilinear path with 11-bit
+  fixed-point weights that is used whenever *either* axis grows. Each is implemented separately, and
+  the 2×2 block is averaged as `(a + b + c + d + 2) >> 2` because that is what the vector kernel
+  does, which is not the same as rounding the float mean.
+- **Luma is OpenCV's 15-bit integer form**, `(r*9798 + g*19235 + b*3735 + 16384) >> 15`. A
+  hand-rolled `0.299r + 0.587g + 0.114b` disagrees with it on the pixels that land on a half — on
+  this image, five of them, which is enough.
+- **`adaptiveThreshold` does not blur the 8-bit image.** It promotes the grey image to `CV_32F`,
+  blurs that with the `CV_32F` kernel, converts back, and compares. The port does the same.
 
-The cause is arithmetic rather than algorithm: OpenCV resizes and blurs in fixed point, this port
-carries `f64` and rounds once, and the two disagree by one where their roundings disagree. Closing it
-means reimplementing OpenCV's fixed-point kernels exactly — `resizeArea_`'s integer weights and the
-kernel quantisation inside `sepFilter2D` — and then the *threshold* is identical and the route with
-it. That is a real piece of work, and it is the only known route to a green `task parity`.
+### The residual is the encoder, and it is measured
 
-Two things that look like the same bug and are not:
+A control: take the 86 frames the Python engine drew and encode **those same bytes** twice — once
+through the Python writer's PyAV path, once through the command line this port builds.
+
+| Comparison | PSNR min | SSIM min |
+|---|---|---|
+| Identical input, Python writer vs Rust writer | 39.44 dB | 0.9921 |
+| **Python engine vs Rust engine, end to end** | **39.52 dB** | **0.9922** |
+
+End to end comes out *better* than the control. Two encoders disagreeing this much on identical
+input cannot be disagreeing about the picture, and a frame-level difference between the engines
+would add to the control's difference rather than cancel it. The engine is not in this number: the
+bit-exact stages above are what the engine is, and the decoded-video metric is measuring the two
+libx264 builds.
+
+That is why the decoded-video tolerance is a floor measured from the control rather than a target —
+and why the comparisons that decide parity are the pixel ones, where the answer is zero.
+
+### Rerunning it
+
+The Rust half is an example, so the three stages can be written out at any time:
+
+```powershell
+cargo run -p img2sketch-media --example preprocess_stages -- ..\output\parity\sample.png ..\output\parity\rust-stages
+```
+
+That writes `resized.png`, `grey.png` and `thresholded.png` at 400×300. The Python half is the three
+OpenCV calls the engine makes — `cv2.resize(..., INTER_AREA)` to the same canvas, `cv2.cvtColor`
+with `COLOR_BGR2GRAY`, then `adaptiveThreshold(..., GAUSSIAN_C, THRESH_BINARY, 15, 10)` — and the
+comparison is an absolute difference of the two, per pixel, per stage. One reading trap: `cv2.imread`
+of a PNG written from a Rust `Frame` is *already* in the order the Python arrays are in — the file
+holds the true red, green and blue, and `imread` reverses them into BGR, which is what the Python
+engine's arrays are. Reversing the channels by hand before comparing turns a bit-exact stage into a
+stage that looks entirely wrong.
+
+
+Three things that look like the same bug and are not:
 
 - **A zoom is still an area average.** OpenCV documents `INTER_AREA` when zooming as "similar to
   `INTER_NEAREST`", which invites the reading that the zoom case is plain nearest. It is not: a
@@ -149,6 +190,15 @@ Two things that look like the same bug and are not:
   The fourth positional argument is `dst`, not `sigmaY`, so that call blurs with `sigmaY = 1.0` and
   the *default* border, and comparing against it manufactures a 46-LSB "disagreement" that is not
   there. Use `cv2.GaussianBlur(src, (15,15), 0, None, 0, cv2.BORDER_REPLICATE)`.
+- **`-pixel_format rgb24` and `-pixel_format bgr24` do not encode the same picture.** Neither
+  stream is tagged with a colour range, both are read by the same decoder, and the same frame sent
+  as `rgb24` comes back with white at 255 where `bgr24` brings it back at 250 — a five-step
+  difference across every pixel of the paper, worth 6 dB of PSNR and 0.15 of SSIM on its own. The
+  Python writer hands libx264 `bgr24` frames, so the port declares `bgr24` and swaps the channels;
+  the difference then falls to the encoder noise above. Two frames that look identical and two
+  demuxer names that look interchangeable produced this, and the only way to see it was to encode
+  the same bytes twice and compare.
+
 
 ## Diagnosing a failure
 
