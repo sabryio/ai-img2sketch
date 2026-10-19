@@ -25,7 +25,7 @@ wrong and should be re-cut.
 | Output | H.264 in `yuv420p` (crf 18, veryfast, `+faststart`), written with PyAV/libx264 |
 | Frontend | React 19 + Tailwind v4 + Vite, on the "Lit Sheet" visual world; 12 Playwright specs drive it against the real backend |
 | Packaging | `python:3.13-slim`, uv, non-root uid 10001, tmpfs volumes, healthcheck, single uvicorn worker |
-| Rust today | the workspace exists in [`rust/`](rust/README.md): `img2sketch-core` (pure), `img2sketch-media` (adapters + FFmpeg locator + subprocess encoder), `img2sketch-api`, `img2sketch-cli` — 78 tests green, `cargo clippy --workspace --all-targets` silent. The drawing loop is not ported yet |
+| Rust today | the workspace exists in [`rust/`](rust/README.md): `img2sketch-core` (pure engine), `img2sketch-media` (image I/O, preprocessing, hand loading, FFmpeg locator and subprocess encoder), `img2sketch-api` (health only), `img2sketch-cli` (`generate`, `info`, `doctor`) — 173 tests green, `cargo clippy --workspace --all-targets` silent. The drawing loop is ported and renders end to end. Not ported: the HTTP surface beyond `health`, the object-mask reader, and the preview/artifact store |
 
 ## The end state
 
