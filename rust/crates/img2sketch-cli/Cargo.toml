@@ -1,0 +1,25 @@
+[package]
+name = "img2sketch-cli"
+description = "The command line surface over the sketch engine."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "img2sketch"
+path = "src/main.rs"
+
+[dependencies]
+img2sketch-core.workspace = true
+img2sketch-media.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true

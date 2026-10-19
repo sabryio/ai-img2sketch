@@ -184,3 +184,6 @@ cython_debug/
 # record are tracked; the rest of the flow is scratch)
 .impeccable/*
 !.impeccable/design.json
+
+# Rust (the workspace's Cargo.lock *is* tracked: these are binaries, not libraries)
+rust/.tools/

@@ -1,0 +1,126 @@
+# The Rust workspace: the engine, the API and the CLI.
+#
+# Layer rule (Clean Architecture / Ports & Adapters) — dependencies point inward:
+#
+#     img2sketch-cli ─┐
+#                     ├─> img2sketch-media ──> img2sketch-core
+#     img2sketch-api ─┘
+#
+# `img2sketch-core` is pure: no filesystem, no network, no async runtime, no native library.
+# Anything that performs I/O lives in `img2sketch-media` (adapters) or in the two
+# presentation crates. `crates/img2sketch-core/tests/architecture.rs` fails the build if that
+# rule is broken.
+#
+# Versions were read from crates.io on 2026-10-19 and pinned deliberately; see
+# docs/rust-architecture.md ("Crates") for why each is here and which were rejected.
+
+[workspace]
+resolver = "3"
+members = [
+    "crates/img2sketch-core",
+    "crates/img2sketch-media",
+    "crates/img2sketch-api",
+    "crates/img2sketch-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+# --- internal ---
+img2sketch-core = { path = "crates/img2sketch-core" }
+img2sketch-media = { path = "crates/img2sketch-media" }
+
+# --- shared ---
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+
+# --- adapters: images ---
+image = { version = "0.25.10", default-features = false, features = [
+    "bmp",
+    "gif",
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+] }
+fast-image-resize = "6.1.0"
+bytemuck = "1.25.2"
+rayon = "1.12.0"
+walkdir = "2.5.0"
+
+# --- adapters: finding and driving FFmpeg ---
+#
+# FFmpeg is *not* linked. Every Rust binding (ffmpeg-next, ffmpeg-the-third) runs bindgen against
+# libclang at build time, which would make a C++/LLVM toolchain a prerequisite for building this
+# workspace — and would make the shipped desktop app depend on the shared avcodec/swscale DLLs at
+# load time. Instead the app invokes an `ffmpeg` executable and pipes raw frames to it, so the
+# workspace builds on a machine with nothing but rustc. Finding that executable is a real problem
+# for a desktop app, which is what these crates are for.
+which = "8.0.6"
+is_executable = "1.0.6"
+directories = "6.0.0"
+
+# --- adapters: files, identifiers, scratch space ---
+uuid = { version = "1.28.0", features = ["v4"] }
+tempfile = "3.27.0"
+
+# --- api ---
+axum = { version = "0.8.9", features = ["json", "multipart"] }
+tokio = { version = "1.53.3", features = ["rt-multi-thread", "macros", "net", "fs", "sync", "signal"] }
+tower = { version = "0.5.3", features = ["util"] }
+tower-http = { version = "0.7.1", features = ["cors", "fs", "limit", "trace"] }
+bytes = "1.12.1"
+tokio-util = { version = "0.7.20", features = ["io"] }
+tokio-stream = "0.1.19"
+futures-util = "0.3.34"
+mime_guess = "2.0.5"
+httpdate = "1.0.3"
+urlencoding = "2.1.3"
+anyhow = "1.0.104"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+
+# --- cli ---
+clap = { version = "4.6.7", features = ["derive"] }
+indicatif = "0.18.6"
+
+# --- windows-only ---
+winreg = "0.56.0"
+
+# --- test-only: leave these here until the crate that needs one opts in, so the versions
+#     are pinned in one place and the default build stays fast ---
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
+axum-test = "21.1.0"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "stream", "rustls-tls"] }
+image-compare = "0.5.0"
+sha2 = "0.11.1"
+hex = "0.4.3"
+openh264 = "0.9.9"
+proptest = "1.12.0"
+insta = "1.49.0"
+criterion = "0.8.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+# Mirrors the Python rule that no `# type: ignore` is allowed: an unwrap is a decision to
+# crash, so it is a compile error outside tests.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+todo = "warn"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
