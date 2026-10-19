@@ -2,7 +2,9 @@
 
 > **Status.** This document describes the engine as it exists today: Python 3.13, FastAPI, OpenCV
 > and PyAV, with the Playwright suite as its behavioural contract. A port of the engine, the API and
-> the CLI to Rust is planned behind a contract that does not move — see
+> the CLI to Rust is under way behind a contract that does not move — the workspace scaffold is in
+> [`rust/`](rust/README.md), and the Python engine here remains the shipping implementation until
+> the Playwright suite passes against Rust. See
 > [`docs/rust-architecture.md`](docs/rust-architecture.md) for the target design,
 > [`docs/parity.md`](docs/parity.md) for how the drawing output is proven identical, and
 > [`ROADMAP.md`](ROADMAP.md) for the phases and their gates. The frontend and its design system are

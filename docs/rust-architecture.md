@@ -107,9 +107,12 @@ grown an edge it should not have.
 | `rayon` | 1.12.0 | MIT OR Apache-2.0 | Optional: parallel composition across cells. Added only if it measures |
 | `bytemuck` | 1.25.2 | Zlib OR Apache-2.0 OR MIT | Zero-copy casts between `image` buffers and the flat pixel slices the drawing loop wants |
 | `walkdir` | 2.5.0 | Unlicense/MIT | The folder scan for batch mode — depth-1 today, recursive whenever that option lands |
-| `uuid` | 1.28.0 | Apache-2.0 OR MIT | The `-<hex8>` upload suffix and the preview run directory (`v4` feature) |
-| `tempfile` | 3.27.0 | MIT OR Apache-2.0 | Write-then-rename for uploads and finished videos, so a half-written file is never servable |
-| — | — | — | **The encoder adds no crate under the recommended option**: a bundled `ffmpeg` is invoked with `std::process::Command` on the blocking thread that already owns the render |
+| `uuid` | 1.28.0 | Apache-2.0 OR MIT | The `-<hex8>` upload suffix and the `.part-<…>` name an unfinished render is staged under (`v4` feature) |
+| `which` | 8.0.6 | MIT OR Apache-2.0 | Resolving `ffmpeg` on the user's `PATH` |
+| `is_executable` | 1.0.6 | Apache-2.0 OR MIT | Whether a candidate is actually runnable, rather than merely present |
+| `directories` | 6.0.0 | MIT OR Apache-2.0 | The app's own data directory, where a managed FFmpeg copy would live |
+| `winreg` | 0.56.0 | MIT | Windows `App Paths\ffmpeg.exe`; a Windows-only target dependency |
+| — | — | — | **The encoder adds no crate.** FFmpeg is invoked as a subprocess over raw frames on stdin, so encoding needs a path and `std::process` and nothing else. See [The encoder decision](#the-encoder-decision) |
 
 ### `img2sketch-api` — the axum server
 
@@ -205,7 +208,7 @@ about the lines the tests assert, not the bar above them.
 | `ndarray` (0.17.2) | Not needed once pixel buffers are flat `Vec<u8>` / `ImageBuffer` |
 | `actix-web`, `rocket`, `warp` | `axum` is the tower/tokio-native choice here and matches what the Tauri side already speaks |
 | `sqlx`, `diesel` | Nothing persists, by design |
-| `ffmpeg-next` (9.0.0) / `ffmpeg-sys-next` (9.0.1) | Needs a per-platform FFmpeg build and a WTFPL/LGPL/GPL licence tangle; revisit only if the subprocess shows up in a profile |
+| `ffmpeg-next` / `ffmpeg-sys-next` / `ffmpeg-the-third` | **Decided against.** Every one of them generates its bindings with `bindgen`, which needs libclang: `ffmpeg-sys-the-third`'s `build.rs` calls `clang::Clang::new().expect("Cannot find clang")` outright, and there is no pregenerated-bindings escape hatch in any of them. That would make a C++/LLVM toolchain a prerequisite for *compiling* this repository, and would make the shipped app resolve `avcodec`/`swscale` DLL imports at load time. The subprocess path needs neither |
 | `mp4` (0.14.0) | Only relevant if the pure-Rust encoder path is taken; it also writes the container, so faststart becomes our problem |
 | `imageproc` (0.27.0) | Its adaptive threshold is a box mean or median, not OpenCV's Gaussian local mean — the operator we must not substitute |
 | `num-traits`, `mimalloc`, `jemallocator` | Speculative. Allocators and generic maths are a post-parity measurement, not a guess |
@@ -265,14 +268,45 @@ substitute a "visually similar" operator and call the phase done.
 The product requirement is that the finished video **plays where it is watched** — the Tauri webview
 — which is why the project moved to H.264. Any Rust choice has to keep that true.
 
+**Decided: invoke an `ffmpeg` executable as a subprocess.** Frames are piped to it as raw `rgb24`,
+and it is given the arguments already in use (`libx264`, crf 18, `veryfast`, `yuv420p`,
+`+faststart`), which are built by a pure function and asserted in `ffmpeg/encoder.rs`. The encoder is
+not the thing being rewritten, so keeping it byte-for-byte identical removes a risk axis instead of
+adding one.
+
+Three things decided it, in order of weight:
+
+1. **Linking is not available without libclang.** Every maintained binding crate generates bindings
+   with `bindgen`; `ffmpeg-sys-the-third`'s `build.rs` calls
+   `clang::Clang::new().expect("Cannot find clang")`. Making a C++/LLVM toolchain a prerequisite for
+   compiling this repository — permanently, for everyone who clones it — is too high a price for the
+   encoder alone.
+2. **A desktop app has to find FFmpeg anyway.** The requirement "detect whether FFmpeg is installed
+   on the user's computer" already exists. Under linking it is a diagnostic; under a subprocess it is
+   the mechanism, and the app can be honest about which copy it will use.
+3. **It drops a runtime dependency.** A linked build resolves `avcodec`/`swscale` imports when the
+   process starts, so those DLLs must be shipped and found. A subprocess fails in one place, with a
+   message, at the moment a render is asked for.
+
 | Option | Output vs today | Cost | Verdict |
 |---|---|---|---|
-| **Bundle a static `ffmpeg` binary and invoke it with the arguments already in use** (`libx264`, crf 18, veryfast, `yuv420p`, `+faststart`) | Same encoder, same settings | One ~40 MB binary per platform, one process spawn per video (tens of milliseconds) | **Recommended for the port.** The encoder is not the thing being rewritten; keeping it identical removes a whole risk axis |
-| Link FFmpeg (`ffmpeg-next` / `ffmpeg-sys-next`) | Same | Owning per-platform FFmpeg builds — pkg-config or vcpkg, GPL x264, CI toolchains for three targets | Later, if the subprocess ever shows up in a profile |
+| **Invoke an `ffmpeg` executable with the arguments already in use** | Same encoder, same settings, same bytes | One ~40 MB binary per platform, one process spawn per video (tens of milliseconds) | **Decided.** What `img2sketch-media` implements |
+| Link FFmpeg (`ffmpeg-next` / `ffmpeg-sys-next` / `ffmpeg-the-third`) | Same | A C++/LLVM toolchain on every build machine, plus shipping shared FFmpeg libraries and their GPL obligations | **Rejected.** Decided against explicitly, not deferred |
 | Pure-Rust path (`openh264` + an MP4 muxer crate) | Different: bitrate rate control instead of CRF, plus container layout and faststart written by hand | Smallest and most self-contained; BSD licensed | Attractive once the golden harness can prove the retuned output is as good — a follow-up, not the first cut |
 
-The adapter keeps the same shape regardless of which option wins: `write_frame`, then a `release` that
-drains the encoder before closing. The choice is contained entirely inside `img2sketch-media`.
+The adapter keeps the same shape regardless: `write_frame`, then a `release` that drains the encoder
+before closing. The choice is contained entirely inside `img2sketch-media`, and the port in
+`img2sketch-core` does not know which one is in use.
+
+**Two consequences to keep visible.**
+
+- **Where the executable comes from is a product feature, not a build detail.** It is searched for in
+  order of trust (bundled, managed, configured, `PATH`, standard locations, registry) and the result
+  is reported as a state to display: found, or not found; and if found, whether it can actually
+  encode H.264. A minimal FFmpeg without `libx264` is a real failure mode and the app says so.
+- **A build with `libx264` is GPL.** Whether the released app ships one, downloads one, or asks the
+  user for one is a distribution decision with a licence attached. It is recorded here so it is made
+  deliberately at packaging time rather than discovered then.
 
 ## API layer
 

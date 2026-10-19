@@ -25,16 +25,16 @@ wrong and should be re-cut.
 | Output | H.264 in `yuv420p` (crf 18, veryfast, `+faststart`), written with PyAV/libx264 |
 | Frontend | React 19 + Tailwind v4 + Vite, on the "Lit Sheet" visual world; 12 Playwright specs drive it against the real backend |
 | Packaging | `python:3.13-slim`, uv, non-root uid 10001, tmpfs volumes, healthcheck, single uvicorn worker |
-| Rust today | none — no `Cargo.toml`, no `src-tauri/` |
+| Rust today | the workspace exists in [`rust/`](rust/README.md): `img2sketch-core` (pure), `img2sketch-media` (adapters + FFmpeg locator + subprocess encoder), `img2sketch-api`, `img2sketch-cli` — 78 tests green, `cargo clippy --workspace --all-targets` silent. The drawing loop is not ported yet |
 
 ## The end state
 
 ```
-crates/img2sketch-core/     pure engine: domain, services, use cases
-crates/img2sketch-media/    image I/O, preprocessing, encoder, storage, previews
-crates/img2sketch-api/      axum server                                → bin img2sketch-api
-crates/img2sketch-cli/      clap surface                               → bin img2sketch
-desktop/                    Tauri v2 host, spawning the engine as a sidecar
+rust/crates/img2sketch-core/   pure engine: domain, ports, services, use cases
+rust/crates/img2sketch-media/  image I/O, preprocessing, encoder, storage, previews
+rust/crates/img2sketch-api/    axum server                                → bin img2sketch-api
+rust/crates/img2sketch-cli/    clap surface                               → bin img2sketch
+desktop/                       Tauri v2 host, spawning the engine as a sidecar
 ```
 
 The two binary names and the `APP_*` environment variables stay as they are, so `docker-compose.yml`,
@@ -56,20 +56,22 @@ Locked, from the scoping conversation:
    binary names, the `APP_*` variables.
 3. **Python is retired only after the gate passes.** It lives on a tag, available as the reference
    implementation and the golden generator, and as the rollback.
-
-Open, needed before Phase 3:
-
-4. **The H.264 toolchain.** See the table in
-   [`docs/rust-architecture.md`](docs/rust-architecture.md#the-encoder-decision). Recommendation:
-   bundle a static `ffmpeg` binary and invoke it with the arguments already in use, so the encoder is
-   not itself a variable while everything else is being verified; revisit a linked or pure-Rust
-   encoder once the golden harness can prove the alternative is as good.
+4. **The H.264 toolchain: invoke an `ffmpeg` executable as a subprocess.** Not linked — every Rust
+   binding crate (`ffmpeg-next`, `ffmpeg-sys-next`, `ffmpeg-the-third`) generates its bindings with
+   `bindgen`, which needs libclang, which would make an LLVM toolchain a prerequisite for compiling
+   this repository and a set of shared FFmpeg libraries a load-time requirement for the app. Frames
+   are piped as raw `rgb24` with the arguments already in use, so the encoder is not itself a
+   variable while everything else is being verified. Where that executable comes from became a
+   product feature rather than a build detail: it is searched for in order of trust and reported as a
+   state — found, or not; and if found, whether it can actually encode H.264. That search is
+   implemented and tested in `img2sketch-media`. See
+   [`docs/rust-architecture.md`](docs/rust-architecture.md#the-encoder-decision).
 
 ## Two independent tracks
 
 | Track | Owner doc | State |
 |---|---|---|
-| The Rust port | this file, [`docs/rust-architecture.md`](docs/rust-architecture.md), [`docs/parity.md`](docs/parity.md) | not started |
+| The Rust port | this file, [`docs/rust-architecture.md`](docs/rust-architecture.md), [`docs/parity.md`](docs/parity.md) | scaffold in place ([`rust/`](rust/README.md)); goldens not yet frozen |
 | The design finish (`DESIGN.md` + `.impeccable/design.json`) | [`PRODUCT.md`](PRODUCT.md), `.impeccable/` | captures taken, detector clean, finish review not yet run |
 
 They do not block each other. The port touches no file the design track owns.
@@ -99,9 +101,12 @@ Python engine; the manifest is committed.
 
 **Goal.** The algorithms exist in Rust, tested, with no I/O.
 
-**Work.** Cargo workspace; `img2sketch-core` with the domain types and the pure services: dimension
-adjuster, grid calculator, drawing path calculator, drawing planner, drawing speed calculator, hand
-overlay, video path resolver. Port the behavioural tests for each. No async, no files, no OpenCV.
+**Work.** **Largely done:** the workspace, `img2sketch-core`'s domain types (dimensions with the
+even-for-encoder rule and common divisors, frames with odd-side padding, video config with validated
+ranges, encoder settings) and the dimension adjuster are in [`rust/`](rust/README.md). What remains
+are the rest of the pure services: grid calculator, drawing path calculator, drawing planner, drawing
+speed calculator, hand overlay, video path resolver — each with its ported behavioural tests. No
+async, no files, no OpenCV.
 
 **Gate.** `cargo test` green on the ported algorithm tests; the pure crate has no dependency on I/O
 or async runtimes.
@@ -127,9 +132,12 @@ image rather than waved through.
 
 **Goal.** A real MP4 comes out of Rust.
 
-**Work.** The single-image use case, the encoder adapter, the frame pipeline (compose `n+1` while
-encoding `n`), the preview publisher and the progress reporter with the same throttle and monotonic
-percentages. The batch use case follows immediately, since it reuses the same loop.
+**Work.** The single-image use case, the frame pipeline (compose `n+1` while encoding `n`), the
+preview publisher and the progress reporter with the same throttle and monotonic percentages. The
+batch use case follows immediately, since it reuses the same loop. The encoder adapter itself is
+already written — `img2sketch-media/src/ffmpeg/writer.rs` pipes padded raw frames to an `ffmpeg`
+subprocess and is verified end to end against `ffprobe` — so what is left here is the drawing loop
+that feeds it.
 
 **Gate.** Decoded frames match the golden MP4 within the metrics in
 [`docs/parity.md`](docs/parity.md); frame count, dimensions, frame rate and duration are equal; the
@@ -196,7 +204,7 @@ tagged engine.
 |---|---|---|
 | Adaptive threshold (Gaussian local mean) has no drop-in equivalent | high | Own implementation, verified per-image against the goldens; this is the phase the schedule is most likely to lose |
 | `INTER_AREA` rounding differences flip near-threshold pixels | medium | Golden comparison with a bounded pixel-diff allowance, and a diff image for every failure |
-| The encoder toolchain becomes a build-farm problem | medium | The Phase 3 recommendation keeps the encoder identical; only the wrapper changes |
+| The encoder toolchain becomes a build-farm problem | low | Resolved by decision 4: FFmpeg is invoked as a subprocess, so no build machine needs libclang, headers or a link step |
 | Rewriting ~2,100 lines of tests is where the calendar actually goes | medium | Port behavioural tests; skip tests that only assert re-exports or Pydantic behaviour that Rust's type system removes |
 | Two implementations drift while both exist | medium | The goldens and the e2e suite are the only gate; Python is retired at Phase 7 on a date, not eventually |
 | Scope creep into IPC, Tauri commands or the UI | high | Decision 1 is a boundary, not a preference: HTTP stays the only contract |
